@@ -11,6 +11,7 @@ const NESTED_HERDR_MESSAGES: [&str; 6] = [
     "recursion detected. base case not found. aborting.",
 ];
 
+mod agent_group; // fork: agent panel status sections
 mod agent_resume;
 mod agent_view_eval;
 mod api;
@@ -332,7 +333,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Set to "" to leave the outer terminal title alone.
 # window_title = "{hostname}: {workspace}"
 
-# Agent panel ordering: "spaces" (grouped by space) or "priority" (attention queue).
+# Agent panel ordering: "spaces" (grouped by space), "priority" (attention queue), or "status" (sections by what the agent needs).
 # "workspaces" is accepted as an alias for "spaces".
 # agent_panel_sort = "spaces"
 

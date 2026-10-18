@@ -1682,3 +1682,98 @@ fn semantic_notifications_use_client_policy_and_stable_navigation_targets() {
     assert!(state.visible_notification.is_none());
     assert_eq!(state.pending_notifications.len(), 1);
 }
+
+// fork: the status sort shows sections, and right-click moves an agent.
+#[test]
+fn status_sort_groups_agents_into_sections_and_right_click_reports_phase() {
+    let agent =
+        |pane_id: &str, status: AgentStatus, seq: u64, phase: Option<&str>| ClientShellAgent {
+            pane_id: pane_id.into(),
+            workspace_id: "ws_1".into(),
+            tab_id: "tab_1".into(),
+            name: Some(pane_id.into()),
+            display_agent: None,
+            agent: Some("claude".into()),
+            title: None,
+            terminal_title: None,
+            terminal_title_stripped: None,
+            agent_status: status,
+            state_change_seq: seq,
+            state_labels: Vec::new(),
+            tokens: phase
+                .map(|phase| vec![("phase".to_string(), phase.to_string())])
+                .unwrap_or_default(),
+            focused: false,
+        };
+    let mut projected = snapshot();
+    projected.agents = vec![
+        agent("pane_1", AgentStatus::Done, 30, Some("done")),
+        agent("pane_2", AgentStatus::Working, 10, Some("done")),
+        agent("pane_3", AgentStatus::Idle, 5, Some("question")),
+        agent("pane_4", AgentStatus::Idle, 40, Some("waiting")),
+        agent("pane_5", AgentStatus::Blocked, 1, None),
+    ];
+    let mut config = Config::default();
+    config.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Status;
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+
+    let frame = state.compose(106, 40).expect("agent sidebar frame");
+    let text = frame
+        .cells
+        .chunks(frame.width as usize)
+        .map(|row| {
+            row.iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>()
+                .replace(' ', "")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    for header in ["確認待ち2", "実行中1", "監視中1", "完了1"] {
+        assert!(text.contains(header), "missing {header} in frame: {text}");
+    }
+    assert_eq!(
+        state
+            .hits
+            .agents
+            .iter()
+            .map(|(_, pane_id)| pane_id.as_str())
+            .collect::<Vec<_>>(),
+        ["pane_3", "pane_5", "pane_2", "pane_4", "pane_1"]
+    );
+
+    let row = state.hits.agents[0].0;
+    let open = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: row.x + 2,
+        row: row.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(open.actions.is_empty());
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+            target: ClientContextMenuTarget::Agent { ref pane_id },
+            ..
+        })) if pane_id == "pane_3"
+    ));
+    state.compose(106, 40).expect("agent context menu");
+    let waiting = state.hits.context_menu_rows[1].0;
+    let click = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: waiting.x + 1,
+        row: waiting.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    let [ClientShellAction::Endpoint { request, .. }] = &click.actions[..] else {
+        panic!("marking a phase should use the endpoint API");
+    };
+    assert!(matches!(
+        &request.method,
+        crate::api::schema::Method::PaneReportMetadata(params)
+            if params.pane_id == "pane_3"
+                && params.tokens.get("phase") == Some(&Some("waiting".to_string()))
+    ));
+}

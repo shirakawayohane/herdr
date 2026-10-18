@@ -13,6 +13,7 @@ use super::*;
 pub(super) struct AgentRow {
     pub(super) pane_id: String,
     pub(super) status: crate::api::schema::AgentStatus,
+    pub(super) group: crate::agent_group::AgentGroup,
     pub(super) focused: bool,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
 }
@@ -35,6 +36,15 @@ pub(super) fn ordered_agent_pane_ids(
             .collect();
     }
     let mut agents = snapshot.agents.iter().collect::<Vec<_>>();
+    // fork: status sections, newest change first within each section.
+    if sort == crate::config::AgentPanelSortConfig::Status {
+        agents.sort_by_key(|agent| {
+            (
+                agent_group(agent),
+                std::cmp::Reverse(agent.state_change_seq),
+            )
+        });
+    }
     if sort == crate::config::AgentPanelSortConfig::Priority {
         agents.sort_by_key(|agent| {
             (
@@ -80,6 +90,7 @@ pub(super) fn render_agent_panel(
         agent_scroll,
         hits,
         |row| row.rows.len(),
+        |row| row.group,
         |buffer, rect, row, hits| {
             hits.agents.push((rect, row.pane_id.clone()));
             render_agent_row(buffer, rect, row, config);
@@ -121,6 +132,7 @@ pub(super) fn render_agent_panel_header(
     let sort_label = agent_view_label.unwrap_or(match config.agent_panel_sort {
         crate::config::AgentPanelSortConfig::Spaces => "grouped",
         crate::config::AgentPanelSortConfig::Priority => "priority",
+        crate::config::AgentPanelSortConfig::Status => "status",
     });
     let sort_width = display_width(sort_label).min(area.width as usize) as u16;
     let sort_rect = Rect::new(
@@ -160,6 +172,7 @@ pub(super) fn render_agent_list<T>(
     agent_scroll: &mut usize,
     hits: &mut ShellHitMap,
     row_lines: impl Fn(&T) -> usize,
+    row_group: impl Fn(&T) -> crate::agent_group::AgentGroup,
     mut render_row: impl FnMut(&mut Buffer, Rect, &T, &mut ShellHitMap),
 ) {
     let body = Rect::new(
@@ -186,23 +199,13 @@ pub(super) fn render_agent_list<T>(
         return;
     }
 
-    let row_heights = rows
-        .iter()
-        .map(|row| row_lines(row).max(1).min(u16::MAX as usize) as u16)
-        .collect::<Vec<_>>();
-    let gaps = rows
-        .iter()
-        .enumerate()
-        .map(|(index, _)| {
-            if index + 1 < rows.len() {
-                config.agents.row_gap
-            } else {
-                0
-            }
-        })
-        .collect::<Vec<_>>();
-    let metrics =
-        super::scroll::list_scroll_metrics(&row_heights, &gaps, body.height, *agent_scroll);
+    let layout = agent_list_layout(rows, config, row_lines, row_group);
+    let metrics = super::scroll::list_scroll_metrics(
+        &layout.heights,
+        &layout.gaps,
+        body.height,
+        *agent_scroll,
+    );
     hits.agent_max_scroll = metrics.max_offset_from_bottom;
     hits.agent_scroll_metrics = Some(metrics);
     *agent_scroll = metrics
@@ -211,20 +214,19 @@ pub(super) fn render_agent_list<T>(
     let show_scrollbar = metrics.max_offset_from_bottom > 0 && body.width > 1;
     let content_width = body.width.saturating_sub(u16::from(show_scrollbar));
     let mut y = body.y;
-    for (index, row) in rows.iter().enumerate().skip(*agent_scroll) {
-        let height = row_heights[index].min(body.height);
+    for (index, item) in layout.items.iter().enumerate().skip(*agent_scroll) {
+        let height = layout.heights[index].min(body.height);
         if y.saturating_add(height) > body.bottom() {
             break;
         }
         let rect = Rect::new(body.x, y, content_width, height);
-        render_row(buffer, rect, row, hits);
-        y = y
-            .saturating_add(height)
-            .saturating_add(if index + 1 < rows.len() {
-                config.agents.row_gap
-            } else {
-                0
-            });
+        match *item {
+            AgentListItem::Header(group, count) => {
+                render_group_header(buffer, rect, group, count, config)
+            }
+            AgentListItem::Row(row) => render_row(buffer, rect, &rows[row], hits),
+        }
+        y = y.saturating_add(height).saturating_add(layout.gaps[index]);
     }
 
     if show_scrollbar {
@@ -232,6 +234,90 @@ pub(super) fn render_agent_list<T>(
         hits.agent_scrollbar = track;
         super::scroll::render_list_scrollbar(buffer, track, metrics, &config.palette);
     }
+}
+
+// fork: the status sort inserts a header line before each section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AgentListItem {
+    Header(crate::agent_group::AgentGroup, usize),
+    /// Index into the rows slice.
+    Row(usize),
+}
+
+pub(super) struct AgentListLayout {
+    pub(super) items: Vec<AgentListItem>,
+    pub(super) heights: Vec<u16>,
+    pub(super) gaps: Vec<u16>,
+}
+
+pub(super) fn agent_list_layout<T>(
+    rows: &[T],
+    config: &ClientShellConfig,
+    row_lines: impl Fn(&T) -> usize,
+    row_group: impl Fn(&T) -> crate::agent_group::AgentGroup,
+) -> AgentListLayout {
+    let sections = config.agent_panel_sort == crate::config::AgentPanelSortConfig::Status;
+    let mut items = Vec::with_capacity(rows.len() + 4);
+    for (index, row) in rows.iter().enumerate() {
+        if sections {
+            let group = row_group(row);
+            if index == 0 || row_group(&rows[index - 1]) != group {
+                let count = rows[index..]
+                    .iter()
+                    .take_while(|row| row_group(row) == group)
+                    .count();
+                items.push(AgentListItem::Header(group, count));
+            }
+        }
+        items.push(AgentListItem::Row(index));
+    }
+    let heights = items
+        .iter()
+        .map(|item| match *item {
+            AgentListItem::Header(..) => 1,
+            AgentListItem::Row(row) => row_lines(&rows[row]).max(1).min(u16::MAX as usize) as u16,
+        })
+        .collect::<Vec<_>>();
+    let gaps = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| match (item, items.get(index + 1)) {
+            (_, None) | (AgentListItem::Header(..), _) => 0,
+            (_, Some(AgentListItem::Header(..))) => config.agents.row_gap.max(1),
+            _ => config.agents.row_gap,
+        })
+        .collect::<Vec<_>>();
+    AgentListLayout {
+        items,
+        heights,
+        gaps,
+    }
+}
+
+fn render_group_header(
+    buffer: &mut Buffer,
+    rect: Rect,
+    group: crate::agent_group::AgentGroup,
+    count: usize,
+    config: &ClientShellConfig,
+) {
+    let color = match group {
+        crate::agent_group::AgentGroup::NeedsInput => config.palette.red,
+        crate::agent_group::AgentGroup::Working => config.palette.yellow,
+        crate::agent_group::AgentGroup::Waiting => config.palette.accent,
+        crate::agent_group::AgentGroup::Finished => config.palette.overlay0,
+    };
+    Paragraph::new(Line::from(vec![
+        ratatui::text::Span::styled(
+            format!(" {}", group.label()),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        ratatui::text::Span::styled(
+            format!(" {count}"),
+            Style::default().fg(config.palette.overlay0),
+        ),
+    ]))
+    .render(Rect::new(rect.x, rect.y, rect.width, 1), buffer);
 }
 
 pub(super) fn agent_rows(
@@ -313,6 +399,7 @@ pub(super) fn agent_row(
     Some(AgentRow {
         pane_id: agent.pane_id.clone(),
         status: agent.agent_status,
+        group: agent_group(agent),
         focused: agent.focused,
         rows,
     })

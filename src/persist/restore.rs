@@ -440,6 +440,24 @@ fn restore_workspace(
     )
 }
 
+// fork: bring back the reported phase so status sections survive restore.
+fn restore_phase(terminal: &mut TerminalState, pane: Option<&super::snapshot::PaneSnapshot>) {
+    let Some(phase) = pane
+        .and_then(|pane| pane.phase.as_deref())
+        .filter(|phase| crate::agent_group::is_phase(phase))
+    else {
+        return;
+    };
+    terminal.metadata_tokens.patch(
+        HashMap::from([(
+            crate::agent_group::PHASE_TOKEN.to_string(),
+            Some(phase.to_string()),
+        )]),
+        None,
+        std::time::Instant::now(),
+    );
+}
+
 fn unavailable_restored_terminal(
     pane: Option<&super::snapshot::PaneSnapshot>,
     cwd: PathBuf,
@@ -451,6 +469,7 @@ fn unavailable_restored_terminal(
     if let Some(pane) = pane {
         terminal.manual_label = pane.label.clone();
         terminal.launch_argv = pane.launch_argv.clone();
+        restore_phase(&mut terminal, Some(pane));
         if let Some(session) = restored_terminal_agent_session(pane.agent_session.as_ref(), false) {
             terminal.set_persisted_agent_session(session);
         }
@@ -593,6 +612,7 @@ fn restore_tab(
             let terminal_id = TerminalId::alloc();
             let mut terminal = TerminalState::new(terminal_id.clone(), cwd.clone())
                 .with_pending_agent_resume_plan(plan);
+            restore_phase(&mut terminal, saved_pane);
             if let Some(label) = saved_label {
                 terminal.set_manual_label(label);
             }
@@ -688,6 +708,7 @@ fn restore_tab(
             Ok(runtime) => {
                 let terminal_id = TerminalId::alloc();
                 let mut terminal = TerminalState::new(terminal_id.clone(), cwd.clone());
+                restore_phase(&mut terminal, saved_pane);
                 if was_imported {
                     if let Some(argv) = saved_launch_argv {
                         terminal = terminal.with_launch_argv(argv).with_respawn_shell_on_exit();
@@ -1030,6 +1051,35 @@ mod tests {
     #[cfg(not(windows))]
     fn test_restore_shell() -> &'static str {
         "/bin/sh"
+    }
+
+    // fork: a saved phase comes back; unknown values are dropped.
+    #[test]
+    fn restore_phase_brings_back_known_phases_only() {
+        let pane = |phase: &str| super::super::snapshot::PaneSnapshot {
+            cwd: "/".into(),
+            label: None,
+            agent_name: None,
+            managed_agent_kind: None,
+            agent_session: None,
+            agent_resume: None,
+            launch_argv: None,
+            phase: Some(phase.into()),
+        };
+        let mut terminal = TerminalState::new(TerminalId::alloc(), "/".into());
+        restore_phase(&mut terminal, Some(&pane("question")));
+        assert_eq!(
+            terminal
+                .metadata_tokens
+                .values()
+                .get("phase")
+                .map(String::as_str),
+            Some("question")
+        );
+
+        let mut terminal = TerminalState::new(TerminalId::alloc(), "/".into());
+        restore_phase(&mut terminal, Some(&pane("bogus")));
+        assert!(terminal.metadata_tokens.values().is_empty());
     }
 
     #[test]
@@ -1554,6 +1604,7 @@ mod tests {
                             }),
                             agent_resume: None,
                             launch_argv: None,
+                            phase: None,
                         },
                     )]),
                     zoomed: false,
@@ -1636,6 +1687,7 @@ mod tests {
                                 agent_session: None,
                                 agent_resume: None,
                                 launch_argv: None,
+                                phase: None,
                             },
                         ),
                         (
@@ -1648,6 +1700,7 @@ mod tests {
                                 agent_session: None,
                                 agent_resume: None,
                                 launch_argv: None,
+                                phase: None,
                             },
                         ),
                     ]),
@@ -1702,6 +1755,7 @@ mod tests {
                     agent_session: None,
                     agent_resume: None,
                     launch_argv: None,
+                    phase: None,
                 },
             )
         };
@@ -1718,6 +1772,7 @@ mod tests {
             }),
             agent_resume: None,
             launch_argv: None,
+            phase: None,
         };
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
@@ -1870,6 +1925,7 @@ mod tests {
                             }),
                             agent_resume: None,
                             launch_argv: None,
+                            phase: None,
                         },
                     )]),
                     zoomed: false,
@@ -2176,6 +2232,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                phase: None,
             },
         );
         let mut history = SessionHistorySnapshot {

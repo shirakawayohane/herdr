@@ -525,6 +525,8 @@ pub(super) enum ClientContextMenuAction {
     Zoom,
     ToggleRightClickPassthrough,
     ClosePane,
+    /// fork: move an agent to a status section by hand.
+    MarkPhase(&'static str),
 }
 
 #[derive(Debug)]
@@ -548,6 +550,8 @@ pub(super) enum ClientContextMenuTarget {
         has_manual_label: bool,
         right_click_passthrough: bool,
     },
+    /// fork: an agent panel row.
+    Agent { pane_id: String },
 }
 
 #[derive(Debug)]

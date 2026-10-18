@@ -211,6 +211,21 @@ fn status_priority(status: crate::api::schema::AgentStatus) -> u8 {
     }
 }
 
+// fork: section of the status sort.
+fn agent_group(agent: &crate::protocol::ClientShellAgent) -> crate::agent_group::AgentGroup {
+    use crate::api::schema::AgentStatus;
+    let phase = agent
+        .tokens
+        .iter()
+        .find(|(key, _)| key == crate::agent_group::PHASE_TOKEN)
+        .map(|(_, value)| value.as_str());
+    crate::agent_group::agent_group(
+        agent.agent_status == AgentStatus::Blocked,
+        agent.agent_status == AgentStatus::Working,
+        phase,
+    )
+}
+
 fn status_text(status: crate::api::schema::AgentStatus) -> &'static str {
     use crate::api::schema::AgentStatus;
     match status {

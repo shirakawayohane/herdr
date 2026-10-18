@@ -67,6 +67,27 @@ pub(crate) fn apply_agent_view(app: &AppState, entries: &mut Vec<AgentPanelEntry
         }
     }
 
+    // fork: status sections, newest change first within each section.
+    if matches!(
+        app.agent_panel_sort,
+        crate::app::state::AgentPanelSort::Status
+    ) {
+        entries.sort_by_key(|entry| {
+            (
+                crate::agent_group::agent_group(
+                    entry.state == crate::detect::AgentState::Blocked,
+                    entry.state == crate::detect::AgentState::Working,
+                    entry
+                        .tokens
+                        .get(crate::agent_group::PHASE_TOKEN)
+                        .map(String::as_str),
+                ),
+                std::cmp::Reverse(entry.last_agent_state_change_seq),
+            )
+        });
+        return;
+    }
+
     if matches!(
         app.agent_panel_sort,
         crate::app::state::AgentPanelSort::Priority

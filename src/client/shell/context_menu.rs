@@ -79,6 +79,20 @@ impl ClientContextMenuOverlay {
                 ]);
                 items
             }
+            ClientContextMenuTarget::Agent { .. } => vec![
+                item(
+                    "確認待ちにする",
+                    Action::MarkPhase(crate::agent_group::PHASE_QUESTION),
+                ),
+                item(
+                    "監視中にする",
+                    Action::MarkPhase(crate::agent_group::PHASE_WAITING),
+                ),
+                item(
+                    "完了にする",
+                    Action::MarkPhase(crate::agent_group::PHASE_DONE),
+                ),
+            ],
         }
     }
 }
@@ -167,6 +181,16 @@ impl ClientShellState {
         }));
     }
 
+    // fork: right-click on an agent panel row.
+    pub(super) fn open_agent_context_menu(&mut self, pane_id: String, x: u16, y: u16) {
+        self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+            target: ClientContextMenuTarget::Agent { pane_id },
+            x,
+            y,
+            highlighted: 0,
+        }));
+    }
+
     pub(super) fn move_context_menu_selection(&mut self, delta: isize) {
         let Some(ClientShellOverlay::ContextMenu(menu)) = self.overlay.as_mut() else {
             return;
@@ -215,6 +239,33 @@ impl ClientShellState {
                 action,
                 outcome,
             ),
+            ClientContextMenuTarget::Agent { pane_id } => {
+                if let ClientContextMenuAction::MarkPhase(phase) = action {
+                    self.push_endpoint_method(
+                        crate::api::schema::Method::PaneReportMetadata(
+                            crate::api::schema::PaneReportMetadataParams {
+                                pane_id,
+                                source: "user:herdr-manual".into(),
+                                agent: None,
+                                applies_to_source: None,
+                                title: None,
+                                display_agent: None,
+                                state_labels: HashMap::new(),
+                                tokens: HashMap::from([(
+                                    crate::agent_group::PHASE_TOKEN.to_string(),
+                                    Some(phase.to_string()),
+                                )]),
+                                clear_title: false,
+                                clear_display_agent: false,
+                                clear_state_labels: false,
+                                seq: None,
+                                ttl_ms: None,
+                            },
+                        ),
+                        outcome,
+                    );
+                }
+            }
         }
         outcome.repaint = true;
     }

@@ -692,6 +692,8 @@ pub enum AgentPanelSort {
     #[default]
     Spaces,
     Priority,
+    /// fork: see `crate::agent_group`.
+    Status,
 }
 
 #[derive(Debug, Clone)]

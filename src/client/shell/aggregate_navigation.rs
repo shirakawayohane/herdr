@@ -160,6 +160,16 @@ fn sort_aggregate_rows(
     rows: &mut [AggregateAgentRow<'_>],
     sort: crate::config::AgentPanelSortConfig,
 ) {
+    // fork: status sections across machines.
+    if sort == crate::config::AgentPanelSortConfig::Status {
+        rows.sort_by_key(|row| {
+            (
+                agent_group(row.agent),
+                row.endpoint.stale(),
+                std::cmp::Reverse(row.recency),
+            )
+        });
+    }
     if sort == crate::config::AgentPanelSortConfig::Priority {
         rows.sort_by_key(|row| {
             (

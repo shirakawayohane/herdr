@@ -111,6 +111,10 @@ pub struct PaneSnapshot {
     pub agent_resume: Option<PaneAgentResumeSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_argv: Option<Vec<String>>,
+    /// fork: phase the agent last reported (`crate::agent_group`), kept so
+    /// the status sections survive live handoff and restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -350,6 +354,12 @@ fn capture_tab(
             })
             .unwrap_or_default();
         let launch_argv = terminal.and_then(|terminal| terminal.launch_argv.clone());
+        let phase = terminal.and_then(|terminal| {
+            terminal
+                .metadata_tokens
+                .values()
+                .remove(crate::agent_group::PHASE_TOKEN)
+        });
         let agent_session = terminal.and_then(|terminal| {
             if let Some(authority) = terminal.hook_authority.as_ref() {
                 if let Some(session_ref) = authority.session_ref.as_ref() {
@@ -388,6 +398,7 @@ fn capture_tab(
                 agent_session,
                 agent_resume,
                 launch_argv,
+                phase,
             },
         );
     }
@@ -707,6 +718,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                phase: None,
             },
         );
         panes.insert(
@@ -719,6 +731,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                phase: None,
             },
         );
 
@@ -1305,6 +1318,34 @@ mod tests {
         assert_eq!(agent_session.value, session_path);
     }
 
+    // fork: status sections must survive live handoff and restart.
+    #[test]
+    fn capture_contract_includes_reported_phase() {
+        let mut state = state_with_workspaces(&["one"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        state.ensure_test_terminals();
+        let terminal_id = state.workspaces[0].tabs[0].panes[&root]
+            .attached_terminal_id
+            .clone();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.metadata_tokens.patch(
+            HashMap::from([
+                ("phase".to_string(), Some("waiting".to_string())),
+                ("other".to_string(), Some("ignored".to_string())),
+            ]),
+            None,
+            std::time::Instant::now(),
+        );
+
+        let snapshot = capture_from_state(&state);
+        let encoded = serde_json::to_string(&snapshot).unwrap();
+        let decoded: SessionSnapshot = serde_json::from_str(&encoded).unwrap();
+        let pane = &decoded.workspaces[0].tabs[0].panes[&root.raw()];
+
+        assert_eq!(pane.phase.as_deref(), Some("waiting"));
+        assert!(!encoded.contains("ignored"));
+    }
+
     #[test]
     fn capture_contract_includes_reported_agent_resume() {
         let mut state = state_with_workspaces(&["one"]);
@@ -1405,6 +1446,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                phase: None,
             },
         );
         panes.insert(
@@ -1419,6 +1461,7 @@ mod tests {
                 agent_session: None,
                 agent_resume: None,
                 launch_argv: None,
+                phase: None,
             },
         );
 
