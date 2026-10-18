@@ -29,6 +29,8 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "pane.link.activate",
     "pane.link.resolve",
     "pane.rename",
+    // fork: the agent panel's right-click menu reports a phase by hand.
+    "pane.report_metadata",
     "pane.resize",
     "pane.scroll",
     "pane.selection.read",
@@ -292,6 +294,10 @@ mod tests {
         assert_eq!(
             actual.remove("pane.clear").as_deref(),
             Some("0301d288ba198ddaa427dd7421c71911cccaf4ea03544531efa8b67ca21b08f6")
+        );
+        assert_eq!(
+            actual.remove("pane.report_metadata").as_deref(),
+            Some("c288588cf8ee53e966fa3f060d3b03b7be2654852060d574107e93702e4ba7e7")
         );
         assert_eq!(
             actual.remove("pane.link.resolve").as_deref(),
