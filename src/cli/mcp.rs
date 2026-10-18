@@ -10,7 +10,7 @@ use std::io::{BufRead, Write};
 
 use serde_json::{json, Value};
 
-use crate::agent_group::{PHASE_DONE, PHASE_QUESTION, PHASE_TOKEN, PHASE_WAITING};
+use crate::agent_group::{PHASE_AT_TOKEN, PHASE_DONE, PHASE_QUESTION, PHASE_TOKEN, PHASE_WAITING};
 use crate::api::schema::{Method, PaneReportMetadataParams, Request};
 
 const SOURCE: &str = "user:herdr-mcp";
@@ -211,7 +211,10 @@ fn report_phase(pane_id: &str, status: &str) -> Result<(), String> {
             title: None,
             display_agent: None,
             state_labels: HashMap::new(),
-            tokens: HashMap::from([(PHASE_TOKEN.to_string(), Some(status.to_string()))]),
+            tokens: HashMap::from([
+                (PHASE_TOKEN.to_string(), Some(status.to_string())),
+                (PHASE_AT_TOKEN.to_string(), Some(unix_millis().to_string())),
+            ]),
             clear_title: false,
             clear_display_agent: false,
             clear_state_labels: false,
@@ -224,6 +227,13 @@ fn report_phase(pane_id: &str, status: &str) -> Result<(), String> {
         Some(error) => Err(error.to_string()),
         None => Ok(()),
     }
+}
+
+fn unix_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or_default()
 }
 
 fn tool_result(text: &str, is_error: bool) -> Value {

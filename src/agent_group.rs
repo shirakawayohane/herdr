@@ -7,6 +7,9 @@
 
 /// Metadata token an agent sets when it ends a turn.
 pub(crate) const PHASE_TOKEN: &str = "phase";
+/// Unix milliseconds of the agent's last report, so a stop hook can tell
+/// whether the current turn reported without racing the agent's transcript.
+pub(crate) const PHASE_AT_TOKEN: &str = "phase_at";
 pub(crate) const PHASE_QUESTION: &str = "question";
 pub(crate) const PHASE_WAITING: &str = "waiting";
 pub(crate) const PHASE_DONE: &str = "done";
