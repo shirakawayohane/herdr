@@ -1050,8 +1050,35 @@ pub(super) fn url_from_link_target(target: crate::ghostty::LinkTarget) -> Option
     }
 }
 
+// fork: open any `scheme://` link (codex://, file://, vscode://, ...), not only HTTP(S).
 pub(crate) fn safe_web_url(url: &str) -> Option<&str> {
-    (url.starts_with("http://") || url.starts_with("https://")).then_some(url)
+    let (scheme, _) = url.split_once("://")?;
+    is_url_scheme(scheme.chars()).then_some(url)
+}
+
+// Two characters minimum keeps Windows drive letters such as `C://` out.
+fn is_url_scheme(mut scheme: impl Iterator<Item = char> + Clone) -> bool {
+    scheme.clone().count() >= 2
+        && scheme.next().is_some_and(|ch| ch.is_ascii_alphabetic())
+        && scheme.all(is_url_scheme_char)
+}
+
+fn is_url_scheme_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.')
+}
+
+/// Length in cells of a `scheme://` prefix starting exactly at `start`.
+fn url_prefix_len(cells: &[TextCell], start: usize) -> Option<usize> {
+    if start > 0 && is_url_scheme_char(cells[start - 1].ch) {
+        return None;
+    }
+    let scheme_len = cells[start..]
+        .iter()
+        .take_while(|cell| is_url_scheme_char(cell.ch))
+        .count();
+    let scheme = cells[start..start + scheme_len].iter().map(|cell| cell.ch);
+    (is_url_scheme(scheme) && starts_with_chars(&cells[start + scheme_len..], "://"))
+        .then_some(scheme_len + 3)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1175,9 +1202,7 @@ fn byte_index_after_cell(row: &str, cell_idx: usize) -> usize {
 fn url_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<CellSpan> {
     let mut start = 0;
     while start < cells.len() {
-        if starts_with_chars(&cells[start..], "http://")
-            || starts_with_chars(&cells[start..], "https://")
-        {
+        if url_prefix_len(cells, start).is_some() {
             let mut end = start;
             while end + 1 < cells.len() && !cells[end + 1].ch.is_whitespace() {
                 end += 1;
@@ -2403,8 +2428,19 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(0, 7, 19), (1, 0, 17)]
         );
+        // fork: plain-text `file://` links are detected like any other scheme.
+        let mut terminal = crate::ghostty::Terminal::new(80, 4, 1024).unwrap();
+        terminal.write(b"file:///tmp/a");
+        assert_eq!(
+            terminal
+                .viewport_link_regions(0, 0, url_byte_range)
+                .unwrap()
+                .iter()
+                .map(|r| (r.row, r.start_col, r.end_col))
+                .collect::<Vec<_>>(),
+            vec![(0, 0, 12)]
+        );
         for text in [
-            "file:///tmp/a",
             "javascript:alert(1)",
             "\x1b]8;;https://example.com\x1b\\https://example.com\x1b]8;;\x1b\\",
         ] {
@@ -2564,7 +2600,42 @@ mod tests {
             selected_url("[docs](https://example.com/docs)", "docs"),
             None
         );
-        assert_eq!(selected_url("open file:///tmp/report", "file"), None);
+        assert_eq!(
+            selected_url("open file:///tmp/report", "file"),
+            Some("file:///tmp/report")
+        );
+    }
+
+    #[test]
+    fn url_at_byte_accepts_any_scheme_with_authority_separator() {
+        assert_eq!(
+            selected_url("see codex://threads/abc.", "threads"),
+            Some("codex://threads/abc")
+        );
+        assert_eq!(
+            selected_url("(vscode://file/a.rs:3)", "file"),
+            Some("vscode://file/a.rs:3")
+        );
+        assert_eq!(
+            selected_url("x-help+v1.2://topic", "topic"),
+            Some("x-help+v1.2://topic")
+        );
+        assert_eq!(selected_url("C://Windows", "Windows"), None);
+        assert_eq!(selected_url("mailto:a@example.com", "example"), None);
+        assert_eq!(selected_url("1abc://x", "x"), None);
+    }
+
+    #[test]
+    fn link_activation_resolves_custom_scheme_urls_in_plain_text() {
+        let mut terminal = crate::ghostty::Terminal::new(80, 2, 1024 * 1024).unwrap();
+        terminal.write("open codex://threads/abc now".as_bytes());
+        assert_eq!(
+            url_from_link_target(terminal.viewport_link_target(10, 0).unwrap().unwrap()).as_deref(),
+            Some("codex://threads/abc")
+        );
+        assert!(
+            url_from_link_target(terminal.viewport_link_target(1, 0).unwrap().unwrap()).is_none()
+        );
     }
 
     #[test]

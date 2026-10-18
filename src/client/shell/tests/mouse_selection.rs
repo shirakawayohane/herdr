@@ -139,15 +139,14 @@ fn ctrl_click_routes_link_activation_through_endpoint_then_client_host() {
             activate(&mut state, url, true).is_empty(),
             "claimed links belong to plugins"
         );
-        if !url.starts_with("https:") {
-            assert!(
-                matches!(
-                    &activate(&mut state, url, false)[..],
-                    [ClientShellAction::ReplayMouse(_)]
-                ),
-                "unclaimed non-web links must not open externally"
-            );
-        }
+        // fork: unclaimed links of any scheme open with the OS handler.
+        assert!(
+            matches!(
+                &activate(&mut state, url, false)[..],
+                [ClientShellAction::OpenSafeWebUrl(opened)] if opened == url
+            ),
+            "unclaimed links open externally"
+        );
     }
     let click = state.handle_raw_events(vec![RawInputEvent::Mouse(down)]);
     let [ClientShellAction::Endpoint { request, .. }] = &click.actions[..] else {

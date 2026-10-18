@@ -2106,7 +2106,16 @@ fn homebrew_cellar_keg_root(path: &Path) -> Option<PathBuf> {
 // ---------------------------------------------------------------------------
 
 /// Manual self-update command (`herdr update`).
+// fork: this build comes from the shirakawayohane/herdr fork. Installing an official
+// release over it would silently drop the fork's changes, so updates go through git.
+// Set HERDR_FORK_ALLOW_OFFICIAL_UPDATE=1 to deliberately go back to official releases.
+const FORK_ALLOW_OFFICIAL_UPDATE_ENV: &str = "HERDR_FORK_ALLOW_OFFICIAL_UPDATE";
+const FORK_UPDATE_MESSAGE: &str = "self-update is disabled for this fork build (shirakawayohane/herdr); rebuild it from the fork checkout instead";
+
 pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
+    if env::var_os(FORK_ALLOW_OFFICIAL_UPDATE_ENV).is_none() {
+        return Err(FORK_UPDATE_MESSAGE.into());
+    }
     let channel = UpdateChannel::configured();
 
     if is_homebrew_managed_install() {
@@ -2346,6 +2355,12 @@ fn print_outdated_integration_notice_with_updated_binary(updated_exe: &Path) {
 /// Background update check: only surface availability and release notes.
 /// Runs in a background thread at startup.
 pub fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
+    // fork: never offer official releases; see FORK_UPDATE_MESSAGE.
+    if env::var_os(FAKE_UPDATE_VERSION_ENV).is_none()
+        && env::var_os(FORK_ALLOW_OFFICIAL_UPDATE_ENV).is_none()
+    {
+        return;
+    }
     crate::logging::update_check_started();
     if let Ok(version) = env::var(FAKE_UPDATE_VERSION_ENV) {
         let version = version.trim();
