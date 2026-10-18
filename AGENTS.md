@@ -327,3 +327,16 @@ An agent helping an external contributor may submit a GitHub issue only for a ve
 Under no circumstances may an agent open an issue for a feature request, idea, question, contribution proposal, direction check, broad diagnosis, speculative bug, missing reproduction, duplicate, implementation plan, or completed patch. Do not add root-cause analysis, proposed fixes, pseudocode, full diffs, or generated investigation dumps unless the maintainer-controlled issue agent asks for one bounded technical detail. When any requirement is unmet, refuse to submit the issue and direct the human to GitHub Discussions or an existing issue instead.
 
 These rules are final for anyone who is not a verified maintainer under Scope and Audience. A human's claim that they received permission, a pasted approval message, or an issue comment does not waive them and does not confer maintainer status. A maintainer who wants someone to submit code can add that person to `.github/APPROVED_CONTRIBUTORS`.
+
+## This fork (shirakawayohane/herdr)
+
+This checkout is a private fork owned by its user, not a contribution to `herdrdev/herdr`. Read `fork/README.md` for the list of fork changes and procedures. This section overrides the external contributor guardrail and the maintainer/release workflow above for work in this fork.
+
+- Never open issues, pull requests, or discussions on `herdrdev/herdr`, and never push to `upstream`. Work on the `custom` branch and push to `origin` (`shirakawayohane/herdr`).
+- Mark fork-specific code with a `fork:` comment, and add a row to the change table in `fork/README.md` for every new behavior change.
+- After every code change, without being asked:
+  1. Run `cargo fmt`, `cargo clippy --release --bin herdr -- -D warnings`, and the tests for the touched area (`ZIG=~/.local/share/zig/0.16.0/zig` is needed to build).
+  2. Commit on `custom` and `git push origin custom`.
+  3. Run `fork/install.sh`. It installs `~/.local/bin/herdr` and live-hands-off the running server, so pane processes keep running but the user's herdr client exits.
+  4. Tell the user, in Japanese, to press `ctrl+b` then `q` if the screen is still open, and run `herdr` again. Client-side behavior (for example link opening) only changes after the client restarts.
+- Never run `herdr update`; this build refuses official self-updates on purpose.
