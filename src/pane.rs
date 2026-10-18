@@ -3627,7 +3627,7 @@ impl PaneRuntime {
         &self,
         col: u16,
         row: u16,
-        resolve: fn(&str, usize) -> Option<std::ops::Range<usize>>,
+        resolve: impl Fn(&str, usize) -> Option<std::ops::Range<usize>>,
     ) -> Vec<crate::api::schema::PaneLinkRegion> {
         self.terminal.link_regions_at(col, row, resolve)
     }

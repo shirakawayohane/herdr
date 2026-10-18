@@ -7,6 +7,7 @@
 | 内容 | 場所 |
 | --- | --- |
 | ctrl+click で文中の任意 `scheme://` リンク（`codex://` `file://` `vscode://` など）を開く。upstream は http/https だけ | `src/app/actions.rs`（`safe_web_url` / `url_prefix_len`） |
+| ctrl+click でファイルパス（`src/a.rs:12`、`~/x.md`、絶対パスなど）を既定のアプリで開く。相対パスはそのペインで動いているプロセスの作業フォルダ基準。実在するものだけが対象 | `src/app/actions.rs`（`existing_path_at_byte`）、`src/app/api/plugins/mod.rs` |
 | `herdr update` と更新通知を無効化（公式版で上書きされて改造が消えるのを防ぐ）。`HERDR_FORK_ALLOW_OFFICIAL_UPDATE=1` で解除 | `src/update.rs` |
 | agentsパネルの並び替えに「status」を追加。確認待ち／実行中／監視中／完了の見出しで分ける（ヘッダ右端の並び替え表示をクリックして切り替え） | `src/agent_group.rs`、`src/client/shell/agent_sidebar.rs` |
 | `herdr mcp`：エージェント用のMCP。`set_status`（question / waiting / done）で、ターンの終わり方をペインの `phase` に記録する | `src/cli/mcp.rs` |

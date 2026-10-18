@@ -1041,13 +1041,90 @@ impl AppState {
     }
 }
 
-pub(super) fn url_from_link_target(target: crate::ghostty::LinkTarget) -> Option<String> {
+pub(super) fn url_from_link_target(
+    target: crate::ghostty::LinkTarget,
+    cwd: Option<&std::path::Path>,
+) -> Option<String> {
     match target {
         crate::ghostty::LinkTarget::Uri(uri) => Some(uri),
-        crate::ghostty::LinkTarget::Text { text, clicked_byte } => {
-            url_at_byte(&text, clicked_byte).map(str::to_owned)
+        crate::ghostty::LinkTarget::Text { text, clicked_byte } => url_at_byte(&text, clicked_byte)
+            .map(str::to_owned)
+            // fork: a plain-text path to an existing file opens as a `file://` URL.
+            .or_else(|| {
+                existing_path_at_byte(&text, clicked_byte, cwd?).map(|(_, path)| file_url(&path))
+            }),
+    }
+}
+
+// fork: hover regions cover URLs and paths to existing files.
+pub(super) fn link_byte_range(
+    text: &str,
+    clicked_byte: usize,
+    cwd: Option<&std::path::Path>,
+) -> Option<std::ops::Range<usize>> {
+    url_byte_range(text, clicked_byte)
+        .or_else(|| existing_path_at_byte(text, clicked_byte, cwd?).map(|(range, _)| range))
+}
+
+/// fork: the whitespace-delimited token under `clicked_byte` when it names an existing
+/// file or directory, relative paths resolved against `cwd`. Surrounding quotes,
+/// brackets, Markdown emphasis, and a trailing `:line[:col]` are not part of the path.
+fn existing_path_at_byte(
+    text: &str,
+    clicked_byte: usize,
+    cwd: &std::path::Path,
+) -> Option<(std::ops::Range<usize>, std::path::PathBuf)> {
+    const MAX_PATH_BYTES: usize = 4096;
+    let start = text
+        .get(..clicked_byte)?
+        .rfind(char::is_whitespace)
+        .map_or(0, |idx| {
+            idx + text[idx..].chars().next().map_or(1, char::len_utf8)
+        });
+    let end = text[clicked_byte..]
+        .find(char::is_whitespace)
+        .map_or(text.len(), |idx| clicked_byte + idx);
+    let token = &text[start..end];
+    let lead = token.len()
+        - token
+            .trim_start_matches(['"', '\'', '`', '*', '(', '[', '{', '<', '@'])
+            .len();
+    let token = token[lead..].trim_end_matches([
+        '"', '\'', '`', '*', ')', ']', '}', '>', ',', '.', ';', ':', '!', '?',
+    ]);
+    let range = start + lead..start + lead + token.len();
+    if !range.contains(&clicked_byte) || token.len() > MAX_PATH_BYTES || token.contains("://") {
+        return None;
+    }
+    let mut candidate = token;
+    while let Some((rest, suffix)) = candidate.rsplit_once(':') {
+        if suffix.is_empty() || !suffix.chars().all(|ch| ch.is_ascii_digit() || ch == '-') {
+            break;
+        }
+        candidate = rest;
+    }
+    if !candidate.contains(['/', '.']) || candidate.chars().all(|ch| ch == '.') {
+        return None;
+    }
+    let expanded = crate::worktree::expand_tilde_path(candidate);
+    let path = if expanded.is_absolute() {
+        expanded
+    } else {
+        cwd.join(expanded)
+    };
+    path.exists().then_some((range, path))
+}
+
+fn file_url(path: &std::path::Path) -> String {
+    let mut url = String::from("file://");
+    for byte in path.to_string_lossy().bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'.' | b'_' | b'~') {
+            url.push(char::from(byte));
+        } else {
+            url.push_str(&format!("%{byte:02X}"));
         }
     }
+    url
 }
 
 // fork: open any `scheme://` link (codex://, file://, vscode://, ...), not only HTTP(S).
@@ -2550,10 +2627,10 @@ mod tests {
         let mut terminal = crate::ghostty::Terminal::new(20, 2, 1024 * 1024).unwrap();
         terminal.write(url.as_bytes());
         let target = terminal.viewport_link_target(0, 0).unwrap().unwrap();
-        assert_eq!(url_from_link_target(target).as_deref(), Some(url));
+        assert_eq!(url_from_link_target(target, None).as_deref(), Some(url));
         terminal.scroll_viewport_row(0);
         let target = terminal.viewport_link_target(5, 1).unwrap().unwrap();
-        assert_eq!(url_from_link_target(target).as_deref(), Some(url));
+        assert_eq!(url_from_link_target(target, None).as_deref(), Some(url));
     }
 
     #[test]
@@ -2561,15 +2638,18 @@ mod tests {
         let mut terminal = crate::ghostty::Terminal::new(80, 5, 1024 * 1024).unwrap();
         terminal.write("[文档](https://example.com/路径?q=a(b)), next".as_bytes());
         assert!(
-            url_from_link_target(terminal.viewport_link_target(1, 0).unwrap().unwrap()).is_none()
+            url_from_link_target(terminal.viewport_link_target(1, 0).unwrap().unwrap(), None)
+                .is_none()
         );
         assert_eq!(
-            url_from_link_target(terminal.viewport_link_target(7, 0).unwrap().unwrap()).as_deref(),
+            url_from_link_target(terminal.viewport_link_target(7, 0).unwrap().unwrap(), None)
+                .as_deref(),
             Some("https://example.com/路径?q=a(b)")
         );
         terminal.resize(20, 5, 0, 0).unwrap();
         assert_eq!(
-            url_from_link_target(terminal.viewport_link_target(9, 1).unwrap().unwrap()).as_deref(),
+            url_from_link_target(terminal.viewport_link_target(9, 1).unwrap().unwrap(), None)
+                .as_deref(),
             Some("https://example.com/路径?q=a(b)")
         );
         assert!(terminal.viewport_link_target(19, 4).unwrap().is_none());
@@ -2582,7 +2662,7 @@ mod tests {
         terminal.write(url.as_bytes());
         for col in 0..4 {
             let target = terminal.viewport_link_target(col, 1).unwrap().unwrap();
-            assert_eq!(url_from_link_target(target).as_deref(), Some(url));
+            assert_eq!(url_from_link_target(target, None).as_deref(), Some(url));
         }
     }
 
@@ -2630,12 +2710,53 @@ mod tests {
         let mut terminal = crate::ghostty::Terminal::new(80, 2, 1024 * 1024).unwrap();
         terminal.write("open codex://threads/abc now".as_bytes());
         assert_eq!(
-            url_from_link_target(terminal.viewport_link_target(10, 0).unwrap().unwrap()).as_deref(),
+            url_from_link_target(terminal.viewport_link_target(10, 0).unwrap().unwrap(), None)
+                .as_deref(),
             Some("codex://threads/abc")
         );
         assert!(
-            url_from_link_target(terminal.viewport_link_target(1, 0).unwrap().unwrap()).is_none()
+            url_from_link_target(terminal.viewport_link_target(1, 0).unwrap().unwrap(), None)
+                .is_none()
         );
+    }
+
+    // fork: plain-text paths to existing files open as `file://` URLs.
+    #[test]
+    fn link_activation_resolves_existing_file_paths_against_cwd() {
+        let root =
+            std::env::temp_dir().join(format!("herdr-file-link-test-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main 本.rs"), "").unwrap();
+        std::fs::write(root.join("README.md"), "").unwrap();
+        let file_url_for = |rel: &str| file_url(&root.join(rel));
+        let open = |text: &str, needle: &str| {
+            let clicked_byte = text.find(needle).unwrap();
+            url_from_link_target(
+                crate::ghostty::LinkTarget::Text {
+                    text: text.to_owned(),
+                    clicked_byte,
+                },
+                Some(&root),
+            )
+        };
+
+        assert_eq!(
+            open("see `README.md:12:3`.", "READ"),
+            Some(file_url_for("README.md"))
+        );
+        assert_eq!(open("(src/)", "src"), Some(file_url_for("src/")));
+        let absolute = format!("**{}**", root.join("README.md").display());
+        assert_eq!(open(&absolute, "README"), Some(file_url_for("README.md")));
+        assert!(file_url_for("src/main 本.rs").ends_with("/src/main%20%E6%9C%AC.rs"));
+        assert_eq!(open("missing/file.rs", "file"), None);
+        assert_eq!(open("README", "README"), None);
+        assert_eq!(open("...", "."), None);
+        assert_eq!(
+            link_byte_range("edit README.md:4, then", 6, Some(&root)),
+            Some(5..16)
+        );
+        assert_eq!(link_byte_range("edit README.md", 6, None), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
