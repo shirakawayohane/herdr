@@ -448,11 +448,17 @@ fn restore_phase(terminal: &mut TerminalState, pane: Option<&super::snapshot::Pa
     else {
         return;
     };
+    let note = pane
+        .and_then(|pane| pane.phase_note.clone())
+        .filter(|note| !note.trim().is_empty());
     terminal.metadata_tokens.patch(
-        HashMap::from([(
-            crate::agent_group::PHASE_TOKEN.to_string(),
-            Some(phase.to_string()),
-        )]),
+        HashMap::from([
+            (
+                crate::agent_group::PHASE_TOKEN.to_string(),
+                Some(phase.to_string()),
+            ),
+            (crate::agent_group::PHASE_NOTE_TOKEN.to_string(), note),
+        ]),
         None,
         std::time::Instant::now(),
     );
@@ -1065,6 +1071,7 @@ mod tests {
             agent_resume: None,
             launch_argv: None,
             phase: Some(phase.into()),
+            phase_note: Some("CI".into()),
         };
         let mut terminal = TerminalState::new(TerminalId::alloc(), "/".into());
         restore_phase(&mut terminal, Some(&pane("question")));
@@ -1605,6 +1612,7 @@ mod tests {
                             agent_resume: None,
                             launch_argv: None,
                             phase: None,
+                            phase_note: None,
                         },
                     )]),
                     zoomed: false,
@@ -1688,6 +1696,7 @@ mod tests {
                                 agent_resume: None,
                                 launch_argv: None,
                                 phase: None,
+                                phase_note: None,
                             },
                         ),
                         (
@@ -1701,6 +1710,7 @@ mod tests {
                                 agent_resume: None,
                                 launch_argv: None,
                                 phase: None,
+                                phase_note: None,
                             },
                         ),
                     ]),
@@ -1756,6 +1766,7 @@ mod tests {
                     agent_resume: None,
                     launch_argv: None,
                     phase: None,
+                    phase_note: None,
                 },
             )
         };
@@ -1773,6 +1784,7 @@ mod tests {
             agent_resume: None,
             launch_argv: None,
             phase: None,
+            phase_note: None,
         };
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
@@ -1926,6 +1938,7 @@ mod tests {
                             agent_resume: None,
                             launch_argv: None,
                             phase: None,
+                            phase_note: None,
                         },
                     )]),
                     zoomed: false,
@@ -2233,6 +2246,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 phase: None,
+                phase_note: None,
             },
         );
         let mut history = SessionHistorySnapshot {

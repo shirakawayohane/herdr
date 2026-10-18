@@ -1710,7 +1710,13 @@ fn status_sort_groups_agents_into_sections_and_right_click_reports_phase() {
         agent("pane_1", AgentStatus::Done, 30, Some("done")),
         agent("pane_2", AgentStatus::Working, 10, Some("done")),
         agent("pane_3", AgentStatus::Idle, 5, Some("question")),
-        agent("pane_4", AgentStatus::Idle, 40, Some("waiting")),
+        {
+            let mut waiting = agent("pane_4", AgentStatus::Idle, 40, Some("waiting"));
+            waiting
+                .tokens
+                .push(("phase_note".to_string(), "PR12のCI".to_string()));
+            waiting
+        },
         agent("pane_5", AgentStatus::Blocked, 1, None),
     ];
     let mut config = Config::default();
@@ -1731,7 +1737,7 @@ fn status_sort_groups_agents_into_sections_and_right_click_reports_phase() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    for header in ["確認待ち2", "実行中1", "監視中1", "完了1"] {
+    for header in ["確認待ち2", "実行中1", "監視中1", "完了1", "PR12のCI"] {
         assert!(text.contains(header), "missing {header} in frame: {text}");
     }
     assert_eq!(
@@ -1775,5 +1781,6 @@ fn status_sort_groups_agents_into_sections_and_right_click_reports_phase() {
         crate::api::schema::Method::PaneReportMetadata(params)
             if params.pane_id == "pane_3"
                 && params.tokens.get("phase") == Some(&Some("waiting".to_string()))
+                && !params.tokens.contains_key("phase_note")
     ));
 }

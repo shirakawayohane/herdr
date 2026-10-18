@@ -10,6 +10,8 @@ pub(crate) const PHASE_TOKEN: &str = "phase";
 /// Unix milliseconds of the agent's last report, so a stop hook can tell
 /// whether the current turn reported without racing the agent's transcript.
 pub(crate) const PHASE_AT_TOKEN: &str = "phase_at";
+/// Short label for what a waiting agent waits for, or what it asks.
+pub(crate) const PHASE_NOTE_TOKEN: &str = "phase_note";
 pub(crate) const PHASE_QUESTION: &str = "question";
 pub(crate) const PHASE_WAITING: &str = "waiting";
 pub(crate) const PHASE_DONE: &str = "done";
@@ -39,6 +41,12 @@ impl AgentGroup {
             Self::Finished => "完了",
         }
     }
+}
+
+/// Whether the reported note still describes the agent: only while it is in
+/// the section its phase put it in.
+pub(crate) fn shows_phase_note(group: AgentGroup, blocked: bool) -> bool {
+    matches!(group, AgentGroup::Waiting) || (group == AgentGroup::NeedsInput && !blocked)
 }
 
 /// A live blocker or live work wins over the last reported phase, which only

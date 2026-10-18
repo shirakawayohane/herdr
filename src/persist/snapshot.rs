@@ -115,6 +115,9 @@ pub struct PaneSnapshot {
     /// the status sections survive live handoff and restart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase: Option<String>,
+    /// fork: what the agent said it waits for or asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -354,12 +357,15 @@ fn capture_tab(
             })
             .unwrap_or_default();
         let launch_argv = terminal.and_then(|terminal| terminal.launch_argv.clone());
-        let phase = terminal.and_then(|terminal| {
-            terminal
-                .metadata_tokens
-                .values()
-                .remove(crate::agent_group::PHASE_TOKEN)
-        });
+        let (phase, phase_note) = terminal
+            .map(|terminal| {
+                let mut tokens = terminal.metadata_tokens.values();
+                (
+                    tokens.remove(crate::agent_group::PHASE_TOKEN),
+                    tokens.remove(crate::agent_group::PHASE_NOTE_TOKEN),
+                )
+            })
+            .unwrap_or_default();
         let agent_session = terminal.and_then(|terminal| {
             if let Some(authority) = terminal.hook_authority.as_ref() {
                 if let Some(session_ref) = authority.session_ref.as_ref() {
@@ -399,6 +405,7 @@ fn capture_tab(
                 agent_resume,
                 launch_argv,
                 phase,
+                phase_note,
             },
         );
     }
@@ -719,6 +726,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 phase: None,
+                phase_note: None,
             },
         );
         panes.insert(
@@ -732,6 +740,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 phase: None,
+                phase_note: None,
             },
         );
 
@@ -1447,6 +1456,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 phase: None,
+                phase_note: None,
             },
         );
         panes.insert(
@@ -1462,6 +1472,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 phase: None,
+                phase_note: None,
             },
         );
 

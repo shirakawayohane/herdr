@@ -251,10 +251,21 @@ impl ClientShellState {
                                 title: None,
                                 display_agent: None,
                                 state_labels: HashMap::new(),
-                                tokens: HashMap::from([(
-                                    crate::agent_group::PHASE_TOKEN.to_string(),
-                                    Some(phase.to_string()),
-                                )]),
+                                // A hand-picked section drops the agent's
+                                // note unless it stays waiting.
+                                tokens: HashMap::from([
+                                    (
+                                        crate::agent_group::PHASE_TOKEN.to_string(),
+                                        Some(phase.to_string()),
+                                    ),
+                                    (crate::agent_group::PHASE_NOTE_TOKEN.to_string(), None),
+                                ])
+                                .into_iter()
+                                .filter(|(key, _)| {
+                                    phase != crate::agent_group::PHASE_WAITING
+                                        || key == crate::agent_group::PHASE_TOKEN
+                                })
+                                .collect(),
                                 clear_title: false,
                                 clear_display_agent: false,
                                 clear_state_labels: false,

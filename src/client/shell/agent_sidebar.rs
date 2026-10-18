@@ -396,10 +396,27 @@ pub(super) fn agent_row(
         },
         state_text,
     );
+    // fork: show what a waiting agent waits for, or what it asks.
+    let group = agent_group(agent);
+    let mut rows = rows;
+    if crate::agent_group::shows_phase_note(
+        group,
+        agent.agent_status == crate::api::schema::AgentStatus::Blocked,
+    ) {
+        if let (Some(note), Some(last)) = (
+            tokens.get(crate::agent_group::PHASE_NOTE_TOKEN),
+            rows.last_mut(),
+        ) {
+            last.push(crate::ui::ResolvedToken {
+                kind: crate::ui::ResolvedTokenKind::Custom(note.clone()),
+                style: Default::default(),
+            });
+        }
+    }
     Some(AgentRow {
         pane_id: agent.pane_id.clone(),
         status: agent.agent_status,
-        group: agent_group(agent),
+        group,
         focused: agent.focused,
         rows,
     })
