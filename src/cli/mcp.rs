@@ -56,7 +56,11 @@ you can continue.\n\
 step, such as CI, a background task, or a scheduled check. Only use it after you have set up \
 something that wakes you when the result is in (a background task, a monitor, or a scheduled \
 check), and pass monitor_set=true and a note saying what you are waiting for.\n\
-- done: the task is finished and nothing is pending, so the session can be closed.\n\
+- done: the session can be closed now. Report it on your own only when the task was simple and \
+is clearly finished, such as a one-off question answered or a small, verified change with \
+nothing left to try. For anything bigger, or when the user may still want follow-up changes, \
+end your reply by asking whether the task can be marked done and report question with a note \
+such as \"完了確認\"; report done once the user agrees.\n\
 After waiting, the next done is recorded as question so the user checks the result.";
 
 const NOTE_DESCRIPTION: &str = "Short label shown next to the session, in the user's language, \
