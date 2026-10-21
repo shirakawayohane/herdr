@@ -1083,6 +1083,9 @@ pub struct ClientShellAgent {
     pub state_labels: Vec<(String, String)>,
     pub tokens: Vec<(String, String)>,
     pub focused: bool,
+    /// fork: optional so clients and servers without boards still talk.
+    #[serde(default, skip_serializing_if = "crate::board::PaneBoard::is_empty")]
+    pub board: crate::board::PaneBoard,
 }
 
 /// Origin-relative geometry for one pane in a rendered pane surface.

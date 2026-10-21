@@ -136,6 +136,8 @@ pub struct TerminalState {
     pub hook_authority: Option<HookAuthority>,
     pub agent_metadata: HashMap<String, AgentMetadata>,
     pub metadata_tokens: crate::metadata_tokens::MetadataTokens,
+    /// fork: what the pane's agent keeps in front of the user.
+    pub board: crate::board::PaneBoard,
     pub persisted_agent_session: Option<crate::agent_resume::PersistedAgentSession>,
     reported_resume: Option<crate::agent_resume::ReportedAgentResume>,
     reported_resume_revision: u64,
@@ -176,6 +178,7 @@ impl TerminalState {
             hook_authority: None,
             agent_metadata: HashMap::new(),
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
+            board: crate::board::PaneBoard::default(),
             persisted_agent_session: None,
             reported_resume: None,
             reported_resume_revision: 0,

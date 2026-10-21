@@ -207,6 +207,9 @@ pub enum Method {
     PaneReportAgentSession(PaneReportAgentSessionParams),
     #[serde(rename = "pane.report_metadata")]
     PaneReportMetadata(PaneReportMetadataParams),
+    /// fork: replace lists on the pane's board (`crate::board`).
+    #[serde(rename = "pane.board.set")]
+    PaneBoardSet(PaneBoardSetParams),
     #[serde(rename = "pane.clear_agent_authority")]
     PaneClearAgentAuthority(PaneClearAgentAuthorityParams),
     #[serde(rename = "pane.release_agent")]

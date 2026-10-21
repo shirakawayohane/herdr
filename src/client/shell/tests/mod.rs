@@ -176,6 +176,7 @@ fn pane_scroll_result(
 ) -> crate::api::schema::ResponseResult {
     crate::api::schema::ResponseResult::PaneInfo {
         pane: crate::api::schema::PaneInfo {
+            board: Default::default(),
             pane_id: "pane_1".into(),
             terminal_id: "terminal_1".into(),
             workspace_id: "ws_1".into(),
@@ -246,6 +247,7 @@ fn surface_with_popup() -> PaneSurfaceFrame {
 }
 
 mod agents_worktrees_notifications;
+mod board;
 mod chrome_context;
 mod close_pane;
 mod close_tab;

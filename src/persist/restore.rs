@@ -442,6 +442,9 @@ fn restore_workspace(
 
 // fork: bring back the reported phase so status sections survive restore.
 fn restore_phase(terminal: &mut TerminalState, pane: Option<&super::snapshot::PaneSnapshot>) {
+    if let Some(pane) = pane {
+        terminal.board = pane.board.clone();
+    }
     let Some(phase) = pane
         .and_then(|pane| pane.phase.as_deref())
         .filter(|phase| crate::agent_group::is_phase(phase))
@@ -1072,6 +1075,7 @@ mod tests {
             launch_argv: None,
             phase: Some(phase.into()),
             phase_note: Some("CI".into()),
+            board: Default::default(),
         };
         let mut terminal = TerminalState::new(TerminalId::alloc(), "/".into());
         restore_phase(&mut terminal, Some(&pane("question")));
@@ -1087,6 +1091,24 @@ mod tests {
         let mut terminal = TerminalState::new(TerminalId::alloc(), "/".into());
         restore_phase(&mut terminal, Some(&pane("bogus")));
         assert!(terminal.metadata_tokens.values().is_empty());
+    }
+
+    // fork: the board survives a save even without a phase, and old saves
+    // without one restore an empty board.
+    #[test]
+    fn restore_phase_brings_back_the_board() {
+        let saved: super::super::snapshot::PaneSnapshot = serde_json::from_str(
+            r#"{"cwd":"/","board":{"links":[{"label":"dev","url":"http://localhost:3000"}]}}"#,
+        )
+        .unwrap();
+        let mut terminal = TerminalState::new(TerminalId::alloc(), "/".into());
+        restore_phase(&mut terminal, Some(&saved));
+        assert_eq!(terminal.board.links[0].url, "http://localhost:3000");
+
+        let old: super::super::snapshot::PaneSnapshot =
+            serde_json::from_str(r#"{"cwd":"/"}"#).unwrap();
+        assert!(old.board.is_empty());
+        assert!(!serde_json::to_string(&old).unwrap().contains("board"));
     }
 
     #[test]
@@ -1613,6 +1635,7 @@ mod tests {
                             launch_argv: None,
                             phase: None,
                             phase_note: None,
+                            board: Default::default(),
                         },
                     )]),
                     zoomed: false,
@@ -1697,6 +1720,7 @@ mod tests {
                                 launch_argv: None,
                                 phase: None,
                                 phase_note: None,
+                                board: Default::default(),
                             },
                         ),
                         (
@@ -1711,6 +1735,7 @@ mod tests {
                                 launch_argv: None,
                                 phase: None,
                                 phase_note: None,
+                                board: Default::default(),
                             },
                         ),
                     ]),
@@ -1767,6 +1792,7 @@ mod tests {
                     launch_argv: None,
                     phase: None,
                     phase_note: None,
+                    board: Default::default(),
                 },
             )
         };
@@ -1785,6 +1811,7 @@ mod tests {
             launch_argv: None,
             phase: None,
             phase_note: None,
+            board: Default::default(),
         };
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
@@ -1939,6 +1966,7 @@ mod tests {
                             launch_argv: None,
                             phase: None,
                             phase_note: None,
+                            board: Default::default(),
                         },
                     )]),
                     zoomed: false,
@@ -2247,6 +2275,7 @@ mod tests {
                 launch_argv: None,
                 phase: None,
                 phase_note: None,
+                board: Default::default(),
             },
         );
         let mut history = SessionHistorySnapshot {

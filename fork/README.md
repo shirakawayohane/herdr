@@ -12,6 +12,7 @@
 | agentsパネルの並び替えに「status」を追加。確認待ち／実行中／監視中／完了の見出しで分ける（ヘッダ右端の並び替え表示をクリックして切り替え） | `src/agent_group.rs`、`src/client/shell/agent_sidebar.rs` |
 | `herdr mcp`：エージェント用のMCP。`set_status`（question / waiting / done）で、ターンの終わり方をペインの `phase`（時刻 `phase_at`、ひとこと `phase_note`）に記録する。waiting は「監視を設定済み（monitor_set=true）」と何を待つか（note）が必須。waiting の次の done は question に置き換え、監視結果をユーザーが見るまで閉じてよい扱いにしない。note は監視中・確認待ちの行の2行目に出す | `src/cli/mcp.rs` |
 | agentの行を右クリックすると、確認待ち／監視中／完了へ手動で移せる | `src/client/shell/context_menu.rs` |
+| エージェントのボード。`herdr mcp` の `update_board` で「あなたへ（判断してほしいこと／やってほしいこと）」「To-Do」「リンク」を一覧ごと置き換える。サイドバー下段に、全エージェントのあなたへとリンク、操作中ペインの To-Do を出す。あなたへの行をクリックするとそのペインへ移り、リンクはクリック（ctrl+クリックも可）で開く。`set_status` の返事で、残っているあなたへや、完了申告と食い違う To-Do を知らせる。live handoff・再起動後も残る | `src/board.rs`、`src/app/api/board.rs`（`pane.board.set`）、`src/client/shell/board_panel.rs`、`src/cli/mcp.rs` |
 | `phase` を保存し、live handoff や再起動の後も分類を残す | `src/persist/snapshot.rs`、`src/persist/restore.rs` |
 
 改造箇所には `fork:` コメントを付けている。

@@ -226,6 +226,9 @@ pub struct AgentInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foreground_cwd: Option<String>,
     pub revision: u64,
+    /// fork: what the agent keeps in front of the user.
+    #[serde(default, skip_serializing_if = "crate::board::PaneBoard::is_empty")]
+    pub board: crate::board::PaneBoard,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

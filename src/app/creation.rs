@@ -362,6 +362,7 @@ impl App {
             agent_session: terminal_agent_session_info(terminal),
             scroll: None,
             revision: terminal.revision,
+            board: terminal.board.clone(),
         })
     }
 

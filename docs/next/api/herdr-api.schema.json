@@ -79,6 +79,72 @@
           ],
           "type": "string"
         },
+        "AskKind": {
+          "oneOf": [
+            {
+              "enum": [
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "decide",
+              "description": "A decision or answer only the user can give.",
+              "type": "string"
+            },
+            {
+              "const": "do",
+              "description": "Work only the user can do, such as signing in or reviewing.",
+              "type": "string"
+            }
+          ]
+        },
+        "BoardAsk": {
+          "description": "Something the agent needs from the user.",
+          "properties": {
+            "kind": {
+              "$ref": "#/schemas/event/$defs/AskKind",
+              "default": "decide"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        },
+        "BoardLink": {
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "url"
+          ],
+          "type": "object"
+        },
+        "BoardTodo": {
+          "properties": {
+            "state": {
+              "$ref": "#/schemas/event/$defs/TodoState",
+              "default": "pending"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        },
         "EventData": {
           "oneOf": [
             {
@@ -757,6 +823,29 @@
           ],
           "type": "string"
         },
+        "PaneBoard": {
+          "properties": {
+            "asks": {
+              "items": {
+                "$ref": "#/schemas/event/$defs/BoardAsk"
+              },
+              "type": "array"
+            },
+            "links": {
+              "items": {
+                "$ref": "#/schemas/event/$defs/BoardLink"
+              },
+              "type": "array"
+            },
+            "todos": {
+              "items": {
+                "$ref": "#/schemas/event/$defs/BoardTodo"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
         "PaneInfo": {
           "properties": {
             "agent": {
@@ -777,6 +866,10 @@
             },
             "agent_status": {
               "$ref": "#/schemas/event/$defs/AgentStatus"
+            },
+            "board": {
+              "$ref": "#/schemas/event/$defs/PaneBoard",
+              "description": "fork: what the pane's agent keeps in front of the user."
             },
             "cwd": {
               "type": [
@@ -1073,6 +1166,15 @@
             "agent_status"
           ],
           "type": "object"
+        },
+        "TodoState": {
+          "enum": [
+            "pending",
+            "in_progress",
+            "done",
+            "unknown"
+          ],
+          "type": "string"
         },
         "WorkspaceInfo": {
           "properties": {
@@ -1692,6 +1794,72 @@
           },
           "required": [
             "target"
+          ],
+          "type": "object"
+        },
+        "AskKind": {
+          "oneOf": [
+            {
+              "enum": [
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "decide",
+              "description": "A decision or answer only the user can give.",
+              "type": "string"
+            },
+            {
+              "const": "do",
+              "description": "Work only the user can do, such as signing in or reviewing.",
+              "type": "string"
+            }
+          ]
+        },
+        "BoardAsk": {
+          "description": "Something the agent needs from the user.",
+          "properties": {
+            "kind": {
+              "$ref": "#/schemas/request/$defs/AskKind",
+              "default": "decide"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        },
+        "BoardLink": {
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "url"
+          ],
+          "type": "object"
+        },
+        "BoardTodo": {
+          "properties": {
+            "state": {
+              "$ref": "#/schemas/request/$defs/TodoState",
+              "default": "pending"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
           ],
           "type": "object"
         },
@@ -2436,6 +2604,45 @@
             "unknown"
           ],
           "type": "string"
+        },
+        "PaneBoardSetParams": {
+          "description": "fork: each list that is present replaces the board's list; absent lists stay.",
+          "properties": {
+            "asks": {
+              "items": {
+                "$ref": "#/schemas/request/$defs/BoardAsk"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "links": {
+              "items": {
+                "$ref": "#/schemas/request/$defs/BoardLink"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "todos": {
+              "items": {
+                "$ref": "#/schemas/request/$defs/BoardTodo"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "pane_id"
+          ],
+          "type": "object"
         },
         "PaneClearAgentAuthorityParams": {
           "properties": {
@@ -4366,6 +4573,15 @@
           ],
           "type": "string"
         },
+        "TodoState": {
+          "enum": [
+            "pending",
+            "in_progress",
+            "done",
+            "unknown"
+          ],
+          "type": "string"
+        },
         "WorkspaceCloseParams": {
           "properties": {
             "close_group": {
@@ -5978,6 +6194,23 @@
           "type": "object"
         },
         {
+          "description": "fork: replace lists on the pane's board (`crate::board`).",
+          "properties": {
+            "method": {
+              "const": "pane.board.set",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneBoardSetParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "method": {
               "const": "pane.clear_agent_authority",
@@ -6561,6 +6794,10 @@
             "agent_status": {
               "$ref": "#/schemas/success_response/$defs/AgentStatus"
             },
+            "board": {
+              "$ref": "#/schemas/success_response/$defs/PaneBoard",
+              "description": "fork: what the agent keeps in front of the user."
+            },
             "completion_seq": {
               "description": "The current idle transition completed work, independently of who has viewed it.",
               "format": "uint64",
@@ -6775,6 +7012,72 @@
             "unknown"
           ],
           "type": "string"
+        },
+        "AskKind": {
+          "oneOf": [
+            {
+              "enum": [
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "decide",
+              "description": "A decision or answer only the user can give.",
+              "type": "string"
+            },
+            {
+              "const": "do",
+              "description": "Work only the user can do, such as signing in or reviewing.",
+              "type": "string"
+            }
+          ]
+        },
+        "BoardAsk": {
+          "description": "Something the agent needs from the user.",
+          "properties": {
+            "kind": {
+              "$ref": "#/schemas/success_response/$defs/AskKind",
+              "default": "decide"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        },
+        "BoardLink": {
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "url"
+          ],
+          "type": "object"
+        },
+        "BoardTodo": {
+          "properties": {
+            "state": {
+              "$ref": "#/schemas/success_response/$defs/TodoState",
+              "default": "pending"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
         },
         "ClientWindowTitleReason": {
           "enum": [
@@ -7784,6 +8087,29 @@
           ],
           "type": "string"
         },
+        "PaneBoard": {
+          "properties": {
+            "asks": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/BoardAsk"
+              },
+              "type": "array"
+            },
+            "links": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/BoardLink"
+              },
+              "type": "array"
+            },
+            "todos": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/BoardTodo"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
         "PaneDirection": {
           "enum": [
             "left",
@@ -7885,6 +8211,10 @@
             },
             "agent_status": {
               "$ref": "#/schemas/success_response/$defs/AgentStatus"
+            },
+            "board": {
+              "$ref": "#/schemas/success_response/$defs/PaneBoard",
+              "description": "fork: what the pane's agent keeps in front of the user."
             },
             "cwd": {
               "type": [
@@ -10572,6 +10902,15 @@
             "agent_status"
           ],
           "type": "object"
+        },
+        "TodoState": {
+          "enum": [
+            "pending",
+            "in_progress",
+            "done",
+            "unknown"
+          ],
+          "type": "string"
         },
         "WorkspaceInfo": {
           "properties": {

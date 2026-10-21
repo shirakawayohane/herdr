@@ -430,6 +430,8 @@ pub(crate) fn render_sidebar(
         }
     }
 
+    // fork: the board takes rows from the bottom of the agents panel.
+    let (detail_area, board_area) = super::split_board_area(detail_area, snapshot, config);
     super::render_agent_panel(
         buffer,
         detail_area,
@@ -438,6 +440,7 @@ pub(crate) fn render_sidebar(
         state.agent_scroll,
         hits,
     );
+    super::render_board_panel(buffer, board_area, snapshot, config, hits);
 
     hits.sidebar_toggle = Rect::new(
         area.right().saturating_sub(2),

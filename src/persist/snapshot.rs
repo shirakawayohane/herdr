@@ -118,6 +118,9 @@ pub struct PaneSnapshot {
     /// fork: what the agent said it waits for or asks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase_note: Option<String>,
+    /// fork: the agent's board (`crate::board`).
+    #[serde(default, skip_serializing_if = "crate::board::PaneBoard::is_empty")]
+    pub board: crate::board::PaneBoard,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -366,6 +369,9 @@ fn capture_tab(
                 )
             })
             .unwrap_or_default();
+        let board = terminal
+            .map(|terminal| terminal.board.clone())
+            .unwrap_or_default();
         let agent_session = terminal.and_then(|terminal| {
             if let Some(authority) = terminal.hook_authority.as_ref() {
                 if let Some(session_ref) = authority.session_ref.as_ref() {
@@ -406,6 +412,7 @@ fn capture_tab(
                 launch_argv,
                 phase,
                 phase_note,
+                board,
             },
         );
     }
@@ -727,6 +734,7 @@ mod tests {
                 launch_argv: None,
                 phase: None,
                 phase_note: None,
+                board: Default::default(),
             },
         );
         panes.insert(
@@ -741,6 +749,7 @@ mod tests {
                 launch_argv: None,
                 phase: None,
                 phase_note: None,
+                board: Default::default(),
             },
         );
 
@@ -1457,6 +1466,7 @@ mod tests {
                 launch_argv: None,
                 phase: None,
                 phase_note: None,
+                board: Default::default(),
             },
         );
         panes.insert(
@@ -1473,6 +1483,7 @@ mod tests {
                 launch_argv: None,
                 phase: None,
                 phase_note: None,
+                board: Default::default(),
             },
         );
 

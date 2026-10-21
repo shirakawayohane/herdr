@@ -684,6 +684,7 @@ pub(crate) fn api_method_name(method: &Method) -> &'static str {
         Method::PaneReportAgent(_) => "pane.report_agent",
         Method::PaneReportAgentSession(_) => "pane.report_agent_session",
         Method::PaneReportMetadata(_) => "pane.report_metadata",
+        Method::PaneBoardSet(_) => "pane.board.set",
         Method::PaneClearAgentAuthority(_) => "pane.clear_agent_authority",
         Method::PaneReleaseAgent(_) => "pane.release_agent",
         Method::PaneClose(_) => "pane.close",
@@ -1239,6 +1240,7 @@ mod tests {
         agent_status: crate::api::schema::AgentStatus,
     ) -> crate::api::schema::PaneInfo {
         crate::api::schema::PaneInfo {
+            board: Default::default(),
             pane_id: pane_id.into(),
             terminal_id: "term_1".into(),
             workspace_id: "ws_1".into(),

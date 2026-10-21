@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 mod agent_view;
 mod agents;
+mod board; // fork: pane.board.set
 mod env;
 mod integrations;
 mod layouts;
@@ -1194,6 +1195,9 @@ impl App {
             }
             Method::PaneReportMetadata(params) => {
                 return self.handle_pane_report_metadata(request.id, params);
+            }
+            Method::PaneBoardSet(params) => {
+                return self.handle_pane_board_set(request.id, params);
             }
             Method::PaneClearAgentAuthority(params) => {
                 return self.handle_pane_clear_agent_authority(request.id, params);

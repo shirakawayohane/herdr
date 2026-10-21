@@ -397,6 +397,18 @@ pub struct PaneReportAgentSessionParams {
     pub resume_argv: Option<Vec<String>>,
 }
 
+/// fork: each list that is present replaces the board's list; absent lists stay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneBoardSetParams {
+    pub pane_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asks: Option<Vec<crate::board::BoardAsk>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub todos: Option<Vec<crate::board::BoardTodo>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<crate::board::BoardLink>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneReportMetadataParams {
     pub pane_id: String,
@@ -481,6 +493,9 @@ pub struct PaneInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scroll: Option<PaneScrollInfo>,
     pub revision: u64,
+    /// fork: what the pane's agent keeps in front of the user.
+    #[serde(default, skip_serializing_if = "crate::board::PaneBoard::is_empty")]
+    pub board: crate::board::PaneBoard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

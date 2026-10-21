@@ -2167,6 +2167,29 @@ impl ClientShellState {
                     self.tab_press = Some(tab_press);
                     return;
                 }
+                // fork: board lines focus their pane or open their link.
+                let board_target = self
+                    .hits
+                    .board
+                    .iter()
+                    .find(|(rect, _)| super::contains(*rect, point))
+                    .map(|(_, target)| target.clone());
+                match board_target {
+                    Some(super::board_panel::BoardTarget::FocusPane(pane_id)) => {
+                        self.push_endpoint_method(
+                            crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
+                                pane_id,
+                            }),
+                            outcome,
+                        );
+                        return;
+                    }
+                    Some(super::board_panel::BoardTarget::OpenUrl(url)) => {
+                        outcome.actions.push(ClientShellAction::OpenSafeWebUrl(url));
+                        return;
+                    }
+                    None => {}
+                }
                 if self.handle_endpoint_agent_click(point, outcome) {
                     return;
                 }

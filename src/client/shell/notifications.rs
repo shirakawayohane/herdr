@@ -292,6 +292,7 @@ mod tests {
         let mut state = ClientShellState::new(config);
         let mut snapshot = super::super::tests::snapshot();
         snapshot.agents.push(crate::protocol::ClientShellAgent {
+            board: Default::default(),
             pane_id: "pane_1".into(),
             workspace_id: "ws_1".into(),
             tab_id: "tab_1".into(),
@@ -338,6 +339,7 @@ mod tests {
         let mut state = ClientShellState::new(config);
         let mut snapshot = super::super::tests::snapshot();
         snapshot.agents.push(crate::protocol::ClientShellAgent {
+            board: Default::default(),
             pane_id: "pane_1".into(),
             workspace_id: "ws_1".into(),
             tab_id: "tab_1".into(),
