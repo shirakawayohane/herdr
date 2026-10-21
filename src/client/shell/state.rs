@@ -59,6 +59,8 @@ pub(super) struct ClientShellLayout {
     pub tab_bar: Rect,
     pub mobile_header: Rect,
     pub pane_surface: Rect,
+    /// fork: the focused pane's board, a column right of the panes.
+    pub board: Rect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1231,6 +1233,7 @@ impl ClientShellState {
             self.sidebar_collapsed,
             self.focused_tab_count(),
             self.sidebar_width,
+            super::board_panel::board_column_width(self.snapshot.as_deref()),
         )
     }
 

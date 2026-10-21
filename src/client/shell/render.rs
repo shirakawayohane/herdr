@@ -9,7 +9,7 @@ mod tabs;
 
 pub(super) use super::agent_sidebar::{ordered_agent_pane_ids, render_agent_panel};
 pub(super) use super::aggregate_navigation::navigator_rows as client_navigator_rows;
-pub(super) use super::board_panel::{render_board_panel, split_board_area};
+pub(super) use super::board_panel::{render_board_column, render_board_panel, split_board_area};
 pub(super) use overlays::{render_client_overlay, render_context_menu, render_global_menu};
 pub(super) use sidebar::{render_collapsed_sidebar, render_sidebar, workspace_entries};
 pub(super) use tabs::{render_tab_bar, tab_bar_status_width};
@@ -309,6 +309,9 @@ pub(super) fn render_shell(
                 &mut hits,
             );
         }
+    }
+    if layout.board.width > 0 {
+        render_board_column(buffer, layout.board, snapshot, config, &mut hits);
     }
     if layout.tab_bar.height > 0 {
         render_tab_bar(

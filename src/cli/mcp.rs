@@ -32,21 +32,26 @@ const INSTRUCTIONS: &str = "This session runs inside Herdr, a terminal workspace
 watches many agent sessions at once. Before your final reply of every turn, call set_status \
 once so the user can tell which sessions need them, which are waiting on something, and which \
 can be closed. Keep the session's board current with update_board: what you need from the user \
-(asks), your remaining steps (todos), and URLs worth keeping open (links). The user reads the \
-board instead of scrolling back, so do not repeat it at the end of every reply.";
+(asks), the remaining steps (todos), and every URL the user may want to open again (links). \
+The user reads the board instead of scrolling back, so do not repeat it at the end of every \
+reply.";
 
 const UPDATE_BOARD_DESCRIPTION: &str = "Replace lists on this session's board, which Herdr shows \
 beside the terminal until you change it. Each list you pass replaces that whole list; lists you \
-leave out stay as they are; pass [] to clear one. Write entries in the user's language, short \
-enough to scan.\n\
+leave out stay as they are; pass [] to clear one. The user reads the board, so write every entry \
+for them: in their language, short enough to scan, about the work or the result rather than about \
+you, and never naming the user in the third person (write \"Check the sidebar layout\", not \
+\"Have the user check the layout\").\n\
 - asks: everything you are waiting on the user for. kind decide = a decision or answer only they \
 can give; kind do = something only they can do (sign in, review, run a command). Add them in the \
 same turn your reply asks, numbered like your reply (\"Q1 ...\"), and remove each one once the \
 user has answered or done it.\n\
-- todos: your own remaining steps for work with several steps. Update states as you go and clear \
-the list when the work is finished.\n\
-- links: URLs the user will want to open for a while, such as a dev server you started, a PR, or \
-a preview. Remove a link when it stops working, for example after stopping the server.";
+- todos: the remaining steps of work with several steps, each named by what it achieves. Update \
+states as you go and clear the list when the work is finished.\n\
+- links: every URL the user may want to open again, so they never have to ask for it or search \
+the conversation: a dev server you started, an artifact or document you published, a PR, a \
+preview or deploy. Add one as soon as the URL exists, label it by what it shows, and remove it \
+when it stops working, for example after stopping the server.";
 
 const SET_STATUS_DESCRIPTION: &str = "Report how this turn ends. Call it exactly once, right \
 before your final reply of every turn.\n\
