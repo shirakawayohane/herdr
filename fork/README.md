@@ -51,7 +51,7 @@ brew unpin herdr && brew link herdr
 
 - Homebrew 版 herdr は `brew unlink` + `brew pin` 済み（古いシェルから開くと Homebrew 版クライアントが起動してしまったため）
 - 再起動時に claude の `--dangerously-skip-permissions` などを引き継ぐ hook: `~/.claude/hooks/herdr-claude-resume.py`（codex 用は `~/.codex/hooks/herdr-codex-resume.py`）
-- claude で `/branch` すると、元の会話を左のペインで開き直す hook: `~/.claude/hooks/herdr-claude-branch-split.py`（SessionStart の source が `fork` のときだけ動く）。`/branch` は同じ画面を分岐側に置き換えるので、分岐の記録にある元の会話IDを `claude --resume` で隣に開き、左右を入れ替えて「左＝元、右＝分岐」にする。起動時の権限フラグは `herdr-claude-resume.py` の処理を使って引き継ぐ
+- claude で `/branch` すると、元の会話を左のペインで開き直す hook: `~/.claude/hooks/herdr-claude-branch-split.py`（SessionStart の source が `fork` で、直前に同じペインで分岐元の会話が終わった（SessionEnd reason `resume`）ときだけ動く。同じ `fork` で始まる `/fork` や `--fork-session` は対象外）。`/branch` は同じ画面を分岐側に置き換えるので、分岐の記録にある元の会話IDを `claude --resume` で隣に開き、左右を入れ替えて「左＝元、右＝分岐」にする。起動時の権限フラグは `herdr-claude-resume.py` の処理を使って引き継ぐ
 - herdr 内では `FORCE_HYPERLINK=1`（`~/.config/fish/conf.d/herdr-hyperlinks.fish`）。claude が Markdown リンクをクリック可能な形で出す
 - `herdr mcp` は claude（`claude mcp add -s user herdr -- herdr mcp`）と codex（`~/.codex/config.toml` の `[mcp_servers.herdr]`）に登録している
 - 申告忘れの差し戻し: `~/.claude/hooks/herdr-status-guard.py`（claude と codex の両方の Stop hook から使う）。そのセッションに `herdr mcp` が付いていて、今のターンが始まった後に `set_status` が呼ばれていない（ペインの `phase_at` が古い）とき、または claude で waiting と申告したのに裏の処理も予約した確認も動いていないときだけ、1回だけ止めて申告し直させる。入れ子の `claude -p` と、MCP 登録前から動いているセッションは対象外
