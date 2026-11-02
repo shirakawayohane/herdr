@@ -2,6 +2,10 @@
 //!
 //! Agents started in a Herdr pane inherit `HERDR_PANE_ID`, and the MCP server
 //! they launch inherits it in turn, so every tool acts on the agent's own pane.
+//! Claude Code background sessions (`/fork`, `claude --bg`) are the exception:
+//! they run inside Claude's daemon, which carries the pane id of whichever pane
+//! started it, so their tools act on the pane running `claude attach <job>`
+//! instead (`PaneSource`).
 //! `set_status` reports how a turn ended, which drives the agent panel's
 //! status sections (`crate::agent_group`). Reporting `waiting` requires
 //! monitoring that is already running, and the `done` after a `waiting` is
@@ -80,6 +84,8 @@ start a background task, a monitor, or a scheduled check that wakes you when the
 then call set_status again with monitor_set=true. If you cannot monitor it yourself, report \
 question and tell the user what to check, or report done.";
 
+const NO_PANE: &str = "not shown in any Herdr pane; nothing recorded";
+
 const MAX_NOTE_CHARS: usize = 40;
 const FINISHED_MONITORING_NOTE: &str = "監視終了・結果を確認";
 
@@ -99,9 +105,10 @@ pub(super) fn run_mcp_command(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     }
 
-    let pane_id = std::env::var("HERDR_PANE_ID")
-        .ok()
-        .filter(|id| !id.is_empty());
+    let mut source = PaneSource::from_env(
+        std::env::var("HERDR_PANE_ID").ok(),
+        std::env::var("CLAUDE_JOB_DIR").ok(),
+    );
     let mut herdr = HerdrPanes;
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout().lock();
@@ -111,7 +118,14 @@ pub(super) fn run_mcp_command(args: &[String]) -> std::io::Result<i32> {
             continue;
         }
         let response = match serde_json::from_str::<Value>(&line) {
-            Ok(message) => handle_message(&message, pane_id.as_deref(), &mut herdr),
+            Ok(message) => {
+                // Only tool calls need the pane, and a background session's
+                // pane can change between calls.
+                let pane_id = (message.get("method").and_then(Value::as_str) == Some("tools/call"))
+                    .then(|| source.pane_id())
+                    .flatten();
+                handle_message(&message, pane_id.as_deref(), &mut herdr)
+            }
             Err(err) => Some(error_response(
                 Value::Null,
                 -32700,
@@ -244,7 +258,7 @@ fn call_tool(params: &Value, pane_id: Option<&str>, panes: &mut dyn PaneStatus) 
 
 fn update_board(arguments: Value, pane_id: Option<&str>, panes: &mut dyn PaneStatus) -> Value {
     let Some(pane_id) = pane_id else {
-        return tool_result("not running inside a Herdr pane; there is no board", false);
+        return tool_result(NO_PANE, false);
     };
     let mut arguments = match arguments {
         Value::Object(arguments) => arguments,
@@ -293,7 +307,7 @@ fn set_status(arguments: &Value, pane_id: Option<&str>, panes: &mut dyn PaneStat
         }
     }
     let Some(pane_id) = pane_id else {
-        return tool_result("not running inside a Herdr pane; nothing to report", false);
+        return tool_result(NO_PANE, false);
     };
     if nested_agent() {
         // An agent started by another agent (for example `claude -p`) shares
@@ -423,6 +437,106 @@ fn count_agent_ancestors(ps_table: &str, pid: u32) -> usize {
         current = *ppid;
     }
     count
+}
+
+/// Which pane this server's agent is shown in.
+#[derive(Debug, PartialEq, Eq)]
+enum PaneSource {
+    /// The pane the agent was started in.
+    Inherited(Option<String>),
+    /// A Claude Code background session, shown wherever `claude attach <job>`
+    /// runs, if anywhere. Never the inherited pane, which belongs to whatever
+    /// started Claude's daemon. Remembers the last pane found.
+    ClaudeJob { job: String, last: Option<String> },
+}
+
+impl PaneSource {
+    fn from_env(pane_id: Option<String>, claude_job_dir: Option<String>) -> Self {
+        let job = claude_job_dir.and_then(|dir| {
+            std::path::Path::new(dir.trim_end_matches('/'))
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| {
+                    !name.is_empty()
+                        && name
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+                })
+                .map(str::to_string)
+        });
+        match job {
+            Some(job) => Self::ClaudeJob { job, last: None },
+            None => Self::Inherited(pane_id.filter(|id| !id.is_empty())),
+        }
+    }
+
+    fn pane_id(&mut self) -> Option<String> {
+        match self {
+            Self::Inherited(pane_id) => pane_id.clone(),
+            Self::ClaudeJob { job, last } => {
+                let still_attached = last
+                    .as_deref()
+                    .is_some_and(|pane_id| pane_attaches(pane_id, job));
+                if !still_attached {
+                    *last = attaching_pane(job);
+                }
+                last.clone()
+            }
+        }
+    }
+}
+
+/// The pane running `claude attach <job>`. Only panes Herdr sees as Claude
+/// are checked, one process lookup each.
+fn attaching_pane(job: &str) -> Option<String> {
+    let response = super::send_request_unchecked(&Request {
+        id: "mcp:pane_list".into(),
+        method: Method::PaneList(Default::default()),
+    })
+    .ok()?;
+    response
+        .pointer("/result/panes")?
+        .as_array()?
+        .iter()
+        .filter(|pane| pane.get("agent").and_then(Value::as_str) == Some("claude"))
+        .filter_map(|pane| pane.get("pane_id").and_then(Value::as_str))
+        .find(|pane_id| pane_attaches(pane_id, job))
+        .map(str::to_string)
+}
+
+fn pane_attaches(pane_id: &str, job: &str) -> bool {
+    let Ok(response) = super::send_request_unchecked(&Request {
+        id: "mcp:pane_process_info".into(),
+        method: Method::PaneProcessInfo(crate::api::schema::PaneProcessInfoParams {
+            pane_id: Some(pane_id.to_string()),
+        }),
+    }) else {
+        return false;
+    };
+    response
+        .pointer("/result/process_info/foreground_processes")
+        .and_then(Value::as_array)
+        .is_some_and(|processes| {
+            processes.iter().any(|process| {
+                process
+                    .get("argv")
+                    .and_then(Value::as_array)
+                    .is_some_and(|argv| attaches_job(argv, job))
+            })
+        })
+}
+
+/// True for `claude attach <job>` (with any options before the job id).
+fn attaches_job(argv: &[Value], job: &str) -> bool {
+    let argv = argv.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+    let name = argv
+        .first()
+        .map(|arg0| arg0.rsplit('/').next().unwrap_or(arg0));
+    name == Some("claude")
+        && argv
+            .iter()
+            .position(|arg| *arg == "attach")
+            .is_some_and(|at| argv[at + 1..].contains(&job))
 }
 
 struct HerdrPanes;
@@ -765,5 +879,52 @@ mod tests {
         )
         .unwrap();
         assert_eq!(response["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn background_claude_sessions_ignore_the_inherited_pane() {
+        assert_eq!(
+            PaneSource::from_env(Some("w1:p2".into()), None),
+            PaneSource::Inherited(Some("w1:p2".into()))
+        );
+        assert_eq!(
+            PaneSource::from_env(Some(String::new()), None),
+            PaneSource::Inherited(None)
+        );
+        assert_eq!(
+            PaneSource::from_env(
+                Some("w3:p1Q".into()),
+                Some("/Users/me/.claude/jobs/eb9352dc/".into())
+            ),
+            PaneSource::ClaudeJob {
+                job: "eb9352dc".into(),
+                last: None
+            }
+        );
+    }
+
+    #[test]
+    fn only_claude_attach_with_the_job_id_shows_the_job() {
+        let argv = |args: &[&str]| args.iter().map(|arg| json!(arg)).collect::<Vec<_>>();
+        assert!(attaches_job(
+            &argv(&["claude", "attach", "eb9352dc"]),
+            "eb9352dc"
+        ));
+        assert!(attaches_job(
+            &argv(&["/usr/local/bin/claude", "attach", "--quiet", "eb9352dc"]),
+            "eb9352dc"
+        ));
+        assert!(!attaches_job(
+            &argv(&["claude", "attach", "fdc11042"]),
+            "eb9352dc"
+        ));
+        assert!(!attaches_job(
+            &argv(&["claude", "--resume", "eb9352dc"]),
+            "eb9352dc"
+        ));
+        assert!(!attaches_job(
+            &argv(&["herdr", "attach", "eb9352dc"]),
+            "eb9352dc"
+        ));
     }
 }
