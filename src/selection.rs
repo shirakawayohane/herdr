@@ -455,6 +455,85 @@ pub(crate) fn rejoin_app_wrapped_lines(text: &str, start_col: u16, cols: u16) ->
     out
 }
 
+// fork: Claude Code indents every row of its output (2 columns for replies, 5
+// for tool output), so a multi-row copy starts each line with spaces. Remove the
+// indent all copied rows share, keeping relative indentation such as code
+// blocks. The first row counts from the column the selection started at.
+// Single-row reads are left alone: double-click word selection reads one row
+// through the same API and maps the text back to columns.
+pub(crate) fn remove_common_indent(text: &str, start_col: u16) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    if lines.len() < 2 {
+        return text.to_string();
+    }
+    let start_col = usize::from(start_col);
+    let lead = |line: &str| line.len() - line.trim_start_matches(' ').len();
+    let is_blank = |line: &str| line.trim_end_matches('\r').trim().is_empty();
+    let common = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| !is_blank(line))
+        .map(|(index, line)| lead(line) + if index == 0 { start_col } else { 0 })
+        .min()
+        .unwrap_or(0);
+    if common == 0 {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    for (index, line) in lines.iter().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        let skip = if index == 0 {
+            common.saturating_sub(start_col)
+        } else {
+            common
+        };
+        out.push_str(&line[skip.min(lead(line))..]);
+    }
+    out
+}
+
+#[cfg(test)]
+mod indent_tests {
+    use super::remove_common_indent;
+
+    #[test]
+    fn strips_reply_indent_from_every_row() {
+        let text = "  first line\n  second line\n\n  third";
+        assert_eq!(
+            remove_common_indent(text, 0),
+            "first line\nsecond line\n\nthird"
+        );
+    }
+
+    #[test]
+    fn keeps_relative_indentation() {
+        let text = "  fn main() {\n      run();\n  }";
+        assert_eq!(remove_common_indent(text, 0), "fn main() {\n    run();\n}");
+    }
+
+    #[test]
+    fn first_row_counts_from_selection_start() {
+        // Selection began at column 2, right on the text.
+        assert_eq!(remove_common_indent("first\n  second", 2), "first\nsecond");
+        // Selection began mid-sentence further right.
+        assert_eq!(
+            remove_common_indent("tail of row\n  next row", 30),
+            "tail of row\nnext row"
+        );
+    }
+
+    #[test]
+    fn leaves_unindented_and_single_rows_alone() {
+        assert_eq!(
+            remove_common_indent("⏺ reply\n  more", 0),
+            "⏺ reply\n  more"
+        );
+        assert_eq!(remove_common_indent("    one row", 0), "    one row");
+    }
+}
+
 #[cfg(test)]
 mod rejoin_tests {
     use super::rejoin_app_wrapped_lines;

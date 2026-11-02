@@ -278,6 +278,8 @@ impl App {
             ),
             None => text,
         };
+        // fork: drop the indent Claude Code puts at the start of every row.
+        let text = crate::selection::remove_common_indent(&text, selection.ordered_cells().0 .1);
         Ok(text)
     }
 
