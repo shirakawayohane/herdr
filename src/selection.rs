@@ -376,6 +376,148 @@ pub fn write_osc52_bytes(bytes: &[u8]) -> bool {
     }
 }
 
+// fork: apps such as Claude Code wrap long lines themselves (a real newline plus
+// an indent) instead of letting the terminal soft-wrap them, so copying a long
+// path or URL yields "…/very-long\n     -name/file.rs". Join a row back onto the
+// previous one only when all of these hold, so ordinary output is untouched:
+// the previous row ends within WRAP_EDGE_SLACK columns of the right edge with a
+// non-space character, the next row is indented (at least as deep as the
+// previous one), and the token spanning the break looks like a path or URL.
+const WRAP_EDGE_SLACK: usize = 8;
+
+fn leading_space_width(line: &str) -> usize {
+    use unicode_width::UnicodeWidthStr;
+    let trimmed = line.trim_start_matches([' ', '\t']);
+    line[..line.len() - trimmed.len()].width()
+}
+
+fn is_app_wrapped_break(prev: &str, prev_start_col: usize, next: &str, cols: usize) -> bool {
+    use unicode_width::UnicodeWidthStr;
+    if cols < 2 * WRAP_EDGE_SLACK || prev.ends_with(char::is_whitespace) {
+        return false;
+    }
+    let next_body = next.trim_start_matches([' ', '\t']);
+    let next_indent = leading_space_width(next);
+    if next_indent == 0 || next_body.is_empty() {
+        return false;
+    }
+    let prev_indent = match (prev_start_col, leading_space_width(prev)) {
+        (0, lead) => lead,
+        // The selection began mid-row, so the row's real indent is unknown.
+        (_, 0) => 0,
+        (start, lead) => start + lead,
+    };
+    if next_indent < prev_indent {
+        return false;
+    }
+    let end = prev_start_col + prev.width();
+    if end == 0 {
+        return false;
+    }
+    // A terminal soft-wrapped row is already unwrapped; look at its last row.
+    let end_in_row = (end - 1) % cols + 1;
+    if end_in_row + WRAP_EDGE_SLACK < cols {
+        return false;
+    }
+    let tail = prev.rsplit(char::is_whitespace).next().unwrap_or_default();
+    let head = next_body
+        .split(char::is_whitespace)
+        .next()
+        .unwrap_or_default();
+    tail.contains(['/', '\\']) || head.contains(['/', '\\'])
+}
+
+/// Join rows that an application wrapped itself back into one line.
+///
+/// `start_col` is the column the selection starts at on its first row and
+/// `cols` is the pane width.
+pub(crate) fn rejoin_app_wrapped_lines(text: &str, start_col: u16, cols: u16) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut out = String::with_capacity(text.len());
+    for (index, line) in lines.iter().enumerate() {
+        let Some(prev_index) = index.checked_sub(1) else {
+            out.push_str(line);
+            continue;
+        };
+        let prev = lines[prev_index].trim_end_matches('\r');
+        let prev_start = if prev_index == 0 { start_col } else { 0 };
+        let next = line.trim_end_matches('\r');
+        if is_app_wrapped_break(prev, usize::from(prev_start), next, usize::from(cols)) {
+            if out.ends_with('\r') {
+                out.pop();
+            }
+            out.push_str(line.trim_start_matches([' ', '\t']));
+        } else {
+            out.push('\n');
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod rejoin_tests {
+    use super::rejoin_app_wrapped_lines;
+
+    fn row(indent: usize, body: &str, cols: usize) -> String {
+        let line = format!("{}{}", " ".repeat(indent), body);
+        assert!(line.len() <= cols);
+        line
+    }
+
+    #[test]
+    fn joins_path_wrapped_by_app_with_indent() {
+        let cols = 138;
+        let first = row(5, &format!("/Users/me/{}", "a".repeat(117)), cols);
+        let second = row(5, &format!("{}/file-", "b".repeat(121)), cols);
+        let third = row(5, "name.rs", cols);
+        let text = format!("{first}\n{second}\n{third}");
+        let joined = rejoin_app_wrapped_lines(&text, 0, cols as u16);
+        let expected = format!(
+            "     /Users/me/{}{}/file-name.rs",
+            "a".repeat(117),
+            "b".repeat(121)
+        );
+        assert_eq!(joined, expected);
+    }
+
+    #[test]
+    fn joins_when_selection_starts_mid_row() {
+        let cols = 100;
+        let first = format!("/tmp/{}", "x".repeat(91)); // ends at col 4 + 96 = 100
+        let text = format!("{first}\n  rest/of/path.txt");
+        let joined = rejoin_app_wrapped_lines(&text, 4, cols as u16);
+        assert_eq!(joined, format!("{first}rest/of/path.txt"));
+    }
+
+    #[test]
+    fn keeps_newline_for_short_rows() {
+        let text = "     /short/path\n     /another/path";
+        assert_eq!(rejoin_app_wrapped_lines(text, 0, 100), text);
+    }
+
+    #[test]
+    fn keeps_newline_for_unindented_next_row() {
+        let first = format!("/{}", "p/".repeat(49)); // 99 wide, at the edge
+        let text = format!("{first}x\n/next/path");
+        assert_eq!(rejoin_app_wrapped_lines(&text, 0, 100), text);
+    }
+
+    #[test]
+    fn keeps_newline_for_prose_without_paths() {
+        let first = format!("  {}", "word ".repeat(19) + "word"); // 2 + 99
+        let text = format!("{first}\n  continues here");
+        assert_eq!(rejoin_app_wrapped_lines(&text, 0, 102), text);
+    }
+
+    #[test]
+    fn keeps_newline_when_next_row_is_shallower() {
+        let first = format!("    /{}", "q".repeat(94));
+        let text = format!("{first}\n  /other/path");
+        assert_eq!(rejoin_app_wrapped_lines(&text, 0, 100), text);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

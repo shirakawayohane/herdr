@@ -14,6 +14,7 @@
 | agentの行を右クリックすると、確認待ち／監視中／完了へ手動で移せる | `src/client/shell/context_menu.rs` |
 | エージェントのボード。`herdr mcp` の `update_board` で「あなたへ（判断してほしいこと／やってほしいこと）」「To-Do」「リンク」を一覧ごと置き換える。サイドバー下段に全エージェントのあなたへを出し、クリックでそのペインへ移る。どれかのエージェントがボードを持つと、ペインの右に幅34の欄が出て、操作中ペインのあなたへ・リンク・To-Do を折り返して表示する（ペイン幅が60列を切るなら出さない）。リンクはクリック（ctrl+クリックも可）で開く。エージェントには、あなた目線の言葉で書き、URL（起動したサーバー・公開した artifact・PR など）はできた時点で載せるよう説明している。`set_status` の返事で、残っているあなたへや、完了申告と食い違う To-Do を知らせる。live handoff・再起動後も残る | `src/board.rs`、`src/app/api/board.rs`（`pane.board.set`）、`src/client/shell/board_panel.rs`、`src/cli/mcp.rs` |
 | claude の裏の会話（`/fork`・`claude --bg`）でも `herdr mcp` が正しいペインに書く。裏の会話は claude の常駐プロセスの中で動き、`HERDR_PANE_ID` が常駐プロセスを起動したペインのもの（無関係なペイン）になるため、`CLAUDE_JOB_DIR` があるときはそのペイン id を使わず、`claude attach <ジョブID>` を動かしているペインを呼び出しのたびに探して書く（前回見つけたペインを先に確かめる）。どこにも表示されていなければ何も記録しない。`set_status` と `update_board` の両方に効く | `src/cli/mcp.rs`（`PaneSource`） |
+| 長いパスやURLのコピーで、アプリ（Claude Code など）が自分で入れた改行と続きの行の字下げを取り除いて1行に戻す。前の行が右端近く（8列以内）まで埋まって空白以外で終わり、次の行が字下げされていて、改行をまたぐ語に `/` か `\` を含むときだけつなぐ | `src/selection.rs`（`rejoin_app_wrapped_lines`）、`src/app/api/panes.rs`（`pane_selection_text`） |
 | `phase` を保存し、live handoff や再起動の後も分類を残す | `src/persist/snapshot.rs`、`src/persist/restore.rs` |
 
 改造箇所には `fork:` コメントを付けている。

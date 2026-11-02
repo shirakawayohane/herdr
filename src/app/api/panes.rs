@@ -269,6 +269,15 @@ impl App {
         if params.content_revision.is_some() && runtime.content_seq() != before {
             return Err(("stale_content", "pane content changed".to_owned()));
         }
+        // fork: undo line breaks that apps like Claude Code insert into long paths.
+        let text = match runtime.terminal_dimensions() {
+            Some((cols, _)) => crate::selection::rejoin_app_wrapped_lines(
+                &text,
+                selection.ordered_cells().0 .1,
+                cols,
+            ),
+            None => text,
+        };
         Ok(text)
     }
 
