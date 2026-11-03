@@ -1075,14 +1075,15 @@ fn existing_path_at_byte(
     cwd: &std::path::Path,
 ) -> Option<(std::ops::Range<usize>, std::path::PathBuf)> {
     const MAX_PATH_BYTES: usize = 4096;
+    let is_boundary = |ch: char| ch.is_whitespace() || is_cjk_link_boundary(ch);
     let start = text
         .get(..clicked_byte)?
-        .rfind(char::is_whitespace)
+        .rfind(is_boundary)
         .map_or(0, |idx| {
             idx + text[idx..].chars().next().map_or(1, char::len_utf8)
         });
     let end = text[clicked_byte..]
-        .find(char::is_whitespace)
+        .find(is_boundary)
         .map_or(text.len(), |idx| clicked_byte + idx);
     let token = &text[start..end];
     let lead = token.len()
@@ -1281,7 +1282,12 @@ fn url_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<CellSpan
     while start < cells.len() {
         if url_prefix_len(cells, start).is_some() {
             let mut end = start;
-            while end + 1 < cells.len() && !cells[end + 1].ch.is_whitespace() {
+            // fork: also stop at full-width punctuation that Japanese text puts
+            // right after a URL without a space.
+            while end + 1 < cells.len()
+                && !cells[end + 1].ch.is_whitespace()
+                && !is_cjk_link_boundary(cells[end + 1].ch)
+            {
                 end += 1;
             }
             if clicked_idx >= start && clicked_idx <= end {
@@ -1383,6 +1389,32 @@ fn starts_with_chars(cells: &[TextCell], prefix: &str) -> bool {
         .chars()
         .enumerate()
         .all(|(idx, expected)| cells.get(idx).is_some_and(|cell| cell.ch == expected))
+}
+
+/// fork: full-width punctuation never belongs to a link, but Japanese text puts
+/// it directly around paths and URLs, e.g. `プロンプト（/tmp/a.txt）は、`.
+fn is_cjk_link_boundary(ch: char) -> bool {
+    matches!(
+        ch,
+        '（' | '）'
+            | '「'
+            | '」'
+            | '『'
+            | '』'
+            | '【'
+            | '】'
+            | '〈'
+            | '〉'
+            | '《'
+            | '》'
+            | '、'
+            | '。'
+            | '，'
+            | '：'
+            | '；'
+            | '！'
+            | '？'
+    )
 }
 
 fn is_word_separator(ch: char) -> bool {
@@ -2705,6 +2737,23 @@ mod tests {
         assert_eq!(selected_url("1abc://x", "x"), None);
     }
 
+    // fork: a URL followed by Japanese punctuation stops before it.
+    #[test]
+    fn link_activation_stops_urls_at_japanese_punctuation() {
+        let text = "リンク（https://example.com/a/b）を開く、https://example.com/c。次";
+        let open = |needle: &str| {
+            url_from_link_target(
+                crate::ghostty::LinkTarget::Text {
+                    text: text.to_owned(),
+                    clicked_byte: text.find(needle).unwrap(),
+                },
+                None,
+            )
+        };
+        assert_eq!(open("a/b").as_deref(), Some("https://example.com/a/b"));
+        assert_eq!(open("com/c").as_deref(), Some("https://example.com/c"));
+    }
+
     #[test]
     fn link_activation_resolves_custom_scheme_urls_in_plain_text() {
         let mut terminal = crate::ghostty::Terminal::new(80, 2, 1024 * 1024).unwrap();
@@ -2756,6 +2805,13 @@ mod tests {
             Some(5..16)
         );
         assert_eq!(link_byte_range("edit README.md", 6, None), None);
+        // fork: Japanese punctuation around a path is not part of it.
+        let japanese = format!(
+            "プロンプト（{}）は、コピー",
+            root.join("README.md").display()
+        );
+        assert_eq!(open(&japanese, "README"), Some(file_url_for("README.md")));
+        assert_eq!(open("「src/」を見る", "src"), Some(file_url_for("src/")));
         std::fs::remove_dir_all(&root).unwrap();
     }
 
