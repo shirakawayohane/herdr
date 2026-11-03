@@ -16,7 +16,7 @@
 | claude の裏の会話（`/fork`・`claude --bg`）でも `herdr mcp` が正しいペインに書く。裏の会話は claude の常駐プロセスの中で動き、`HERDR_PANE_ID` が常駐プロセスを起動したペインのもの（無関係なペイン）になるため、`CLAUDE_JOB_DIR` があるときはそのペイン id を使わず、`claude attach <ジョブID>` を動かしているペインを呼び出しのたびに探して書く（前回見つけたペインを先に確かめる）。どこにも表示されていなければ何も記録しない。`set_status` と `update_board` の両方に効く | `src/cli/mcp.rs`（`PaneSource`） |
 | 長いパスやURLのコピーで、アプリ（Claude Code など）が自分で入れた改行と続きの行の字下げを取り除いて1行に戻す。前の行が右端近く（8列以内）まで埋まって空白以外で終わり、次の行が字下げされていて、改行をまたぐ語に `/` か `\` を含むときだけつなぐ | `src/selection.rs`（`rejoin_app_wrapped_lines`）、`src/app/api/panes.rs`（`pane_selection_text`） |
 | 複数行をコピーしたとき、全行に共通する行頭の空白（Claude Code の返答の2桁、ツール出力の5桁など）を取り除く。行どうしの相対的な字下げ（コードブロックなど）は残す。1行だけのコピーは対象外（ダブルクリックの単語選択が同じ読み取りを使うため） | `src/selection.rs`（`remove_common_indent`）、`src/app/api/panes.rs`（`pane_selection_text`） |
-| ctrl+click とホバー下線も、アプリが自分で折り返した長いパス・URL（右端近くで切れ、次の行が字下げから続くもの）を1つのリンクとして扱う。つないだ結果に `/` か `\\` を含むときだけ | `crates/ghostty-vt/src/lib.rs`（`extend_link_across_app_wraps`） |
+| ctrl+click とホバー下線も、アプリが自分で折り返した長いパス・URL（右端近くで切れ、次の行が字下げから続くもの）を1つのリンクとして扱う。つないだ結果に `/` か `\` を含むときだけ | `crates/ghostty-vt/src/lib.rs`（`extend_link_across_app_wraps`） |
 | `phase` を保存し、live handoff や再起動の後も分類を残す | `src/persist/snapshot.rs`、`src/persist/restore.rs` |
 
 改造箇所には `fork:` コメントを付けている。
