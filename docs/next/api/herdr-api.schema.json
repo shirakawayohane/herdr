@@ -6194,7 +6194,6 @@
           "type": "object"
         },
         {
-          "description": "fork: replace lists on the pane's board (`crate::board`).",
           "properties": {
             "method": {
               "const": "pane.board.set",

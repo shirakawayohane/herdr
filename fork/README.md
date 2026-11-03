@@ -35,13 +35,19 @@ fork/install.sh
 
 ## upstream への追従
 
+`custom` は配布元で、使っている人の herdr がここから自動更新される。履歴を書き換えると配布と食い違うので、rebase はせず merge で取り込む。
+
 ```bash
 git fetch upstream --tags
-git rebase <新しいタグ>   # 例: v0.9.6
-fork/install.sh
+git merge upstream/master        # 安定版だけにしたいときは新しいタグ（例: v0.9.6）
+cargo test --release --no-fail-fast
+fork/install.sh                  # 手元で動作を確かめてから
+git push origin custom           # これで配布版が作られ、全員に更新の通知が出る
 ```
 
-改造前後でテストを比べるときは `cargo test --release --no-fail-fast` を両方で流し、落ちたテスト名の差分を見る。v0.9.5 でも手元では約20件が実行環境しだいで不安定に落ちる。
+- よくぶつかる所：本家の API 定義は `src/api/schema.rs` の `define_operations!` に1行ずつ並ぶ。改造の `pane.board.set` もそこにあり、`pane.report_metadata` は右クリックで状態を変えるため client shell からも受け付ける（行末が `true, true`）
+- `src/api/schema/operations.rs` のテストが「画面が変わる命令」の一覧を持っているので、改造で命令を足したらそこにも足す。API の schema は `HERDR_UPDATE_API_SCHEMA=1 cargo test --release --bin herdr -- generated_protocol_schema_artifact_is_current` で作り直す
+- テストは手元の設定しだいで落ちるものが十数件ある。取り込み前のコミットでも同じテストを流し、落ちたテスト名の差分だけを見る。並列実行のときだけ落ちるものは `--test-threads=1` で単独に流して確かめる
 
 ## 配布と自動更新
 
