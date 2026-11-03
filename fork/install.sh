@@ -9,6 +9,13 @@ DEST="$HOME/.local/bin/herdr"
 export ZIG="${ZIG:-$HOME/.local/share/zig/0.16.0/zig}"
 
 cd "$REPO"
+# 配布版（.github/workflows/fork-release.yml）と同じ版名を埋め込む。同じコミットなら
+# 更新通知が出ず、より新しい配布版が出たときだけ `herdr update` の対象になる
+export HERDR_BUILD_CHANNEL=fork
+HERDR_BUILD_ID="$("$REPO/fork/build-id.sh")"
+export HERDR_BUILD_ID
+HERDR_BUILD_COMMIT="$(git rev-parse HEAD)"
+export HERDR_BUILD_COMMIT
 cargo build --release
 NEW_VERSION="$("$REPO/target/release/herdr" --version | awk '{print $2}')"
 

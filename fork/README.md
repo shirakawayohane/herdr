@@ -8,7 +8,7 @@
 | --- | --- |
 | ctrl+click で文中の任意 `scheme://` リンク（`codex://` `file://` `vscode://` など）を開く。upstream は http/https だけ | `src/app/actions.rs`（`safe_web_url` / `url_prefix_len`） |
 | ctrl+click でファイルパス（`src/a.rs:12`、`~/x.md`、絶対パスなど）を既定のアプリで開く。相対パスはそのペインで動いているプロセスの作業フォルダ基準。実在するものだけが対象 | `src/app/actions.rs`（`existing_path_at_byte`）、`src/app/api/plugins/mod.rs` |
-| `herdr update` と更新通知を無効化（公式版で上書きされて改造が消えるのを防ぐ）。`HERDR_FORK_ALLOW_OFFICIAL_UPDATE=1` で解除 | `src/update.rs` |
+| 更新は改造版の配布物からだけ受け取る（公式版で上書きされて改造が消えるのを防ぐ）。`custom` に push すると GitHub Actions が macOS・Linux 用の herdr と更新情報 `fork.json` をリリース `fork-<版>` として公開し、古いリリースは新しい10件を残して消す。herdr は動いている間30分ごとにそれを確認し、手元より新しい版があれば通知する。`herdr update` で入れ替わる。版名は `0.9.5-fork.<コミットのUTC日時>-<コミット先頭7桁>` で、手元で `fork/install.sh` したものも同じ名前になる。`HERDR_FORK_ALLOW_OFFICIAL_UPDATE=1` のときだけ公式版を見る | `src/update.rs`（`release_info_from_fork_manifest`）、`.github/workflows/fork-release.yml`、`fork/build-id.sh`、`fork/install.sh` |
 | agentsパネルの並び替えに「status」を追加。確認待ち／実行中／監視中／完了の見出しで分ける（ヘッダ右端の並び替え表示をクリックして切り替え） | `src/agent_group.rs`、`src/client/shell/agent_sidebar.rs` |
 | `herdr mcp`：エージェント用のMCP。`set_status`（question / waiting / done）で、ターンの終わり方をペインの `phase`（時刻 `phase_at`、ひとこと `phase_note`）に記録する。waiting は「監視を設定済み（monitor_set=true）」と何を待つか（note）が必須。waiting の次の done は question に置き換え、監視結果をユーザーが見るまで閉じてよい扱いにしない。note は監視中・確認待ちの行の2行目に出す。done を自分で申告するのは、簡単なタスクで明らかに終わったときだけ。それ以外は返事の最後に「完了でいいですか？」と聞いて question（note「完了確認」）にし、ユーザーが同意したら done にする | `src/cli/mcp.rs` |
 | agentの行を右クリックすると、確認待ち／監視中／完了へ手動で移せる | `src/client/shell/context_menu.rs` |
@@ -42,6 +42,12 @@ fork/install.sh
 ```
 
 改造前後でテストを比べるときは `cargo test --release --no-fail-fast` を両方で流し、落ちたテスト名の差分を見る。v0.9.5 でも手元では約20件が実行環境しだいで不安定に落ちる。
+
+## 配布と自動更新
+
+- `custom` に push すると `.github/workflows/fork-release.yml` が動き、10〜20分ほどでリリースが出る（`.md` と `docs/` だけの変更では動かない）
+- 改造版を使っている人の herdr は30分ごとに最新リリースの `fork.json` を確認する。壊れた版を push すると全員に通知が届くので、push 前に手元で確かめる
+- 新しく入れる人はリリースから自分の環境のファイルを `~/.local/bin/herdr` に置くだけでよい（ビルド不要）
 
 ## 公式版へ戻す
 

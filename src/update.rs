@@ -102,6 +102,8 @@ impl std::fmt::Display for Version {
 enum UpdateChannel {
     Stable,
     Preview,
+    // fork: builds published by the shirakawayohane/herdr fork release workflow.
+    Fork,
 }
 
 impl UpdateChannel {
@@ -116,6 +118,7 @@ impl UpdateChannel {
         match self {
             Self::Stable => "stable",
             Self::Preview => "preview",
+            Self::Fork => "fork",
         }
     }
 }
@@ -521,6 +524,79 @@ fn release_info_from_preview_manifest(
     }))
 }
 
+// fork: this build updates from the fork's own GitHub releases, never from
+// official Herdr releases, so an official build cannot silently replace it.
+// `.github/workflows/fork-release.yml` publishes `fork.json` (preview manifest
+// shape, channel "fork") as an asset of the latest release on every push to
+// `custom`. Set HERDR_FORK_ALLOW_OFFICIAL_UPDATE=1 to go back to official
+// releases deliberately.
+const FORK_UPDATE_MANIFEST_URL: &str =
+    "https://github.com/shirakawayohane/herdr/releases/latest/download/fork.json";
+const FORK_ALLOW_OFFICIAL_UPDATE_ENV: &str = "HERDR_FORK_ALLOW_OFFICIAL_UPDATE";
+
+fn fork_updates_enabled() -> bool {
+    env::var_os(FORK_ALLOW_OFFICIAL_UPDATE_ENV).is_none()
+}
+
+fn current_fork_build_id() -> Option<&'static str> {
+    (crate::build_info::channel() == "fork")
+        .then(crate::build_info::build_id)
+        .flatten()
+}
+
+/// fork: build ids start with the commit's UTC time (`YYYYMMDDHHMMSS-sha`), so
+/// a plain string comparison orders them. Only a strictly newer build counts,
+/// so a local build ahead of the latest release is never "updated" backwards.
+fn release_info_from_fork_manifest(
+    manifest: &PreviewManifest,
+    current_build_id: Option<&str>,
+) -> Result<Option<ReleaseInfo>, String> {
+    if manifest.channel != "fork" {
+        return Err(format!(
+            "invalid fork manifest channel: {}",
+            manifest.channel
+        ));
+    }
+    let build_id = manifest.build_id.trim();
+    if build_id.is_empty() {
+        return Err("fork manifest build_id is empty".into());
+    }
+    if current_build_id.is_some_and(|current| current >= build_id) {
+        return Ok(None);
+    }
+    let version = Version::parse(&manifest.base_version).ok_or_else(|| {
+        format!(
+            "invalid base_version in fork manifest: {}",
+            manifest.base_version
+        )
+    })?;
+    let (os, arch) = platform_target();
+    let asset_key = format!("{os}-{arch}");
+    let asset = manifest
+        .assets
+        .get(&asset_key)
+        .ok_or_else(|| format!("no binary for {asset_key} in fork manifest"))?;
+    Ok(Some(ReleaseInfo {
+        identity: format!(
+            "{}-fork.{build_id}",
+            manifest.base_version.trim_start_matches('v')
+        ),
+        version,
+        channel: UpdateChannel::Fork,
+        build_id: Some(build_id.to_string()),
+        commit: Some(manifest.commit.clone()),
+        #[cfg(not(windows))]
+        target_protocol: Some(manifest.protocol),
+        #[cfg(not(windows))]
+        target_endpoint_generation: manifest.endpoint_generation,
+        download_url: asset.url.clone(),
+        sha256: asset.sha256.clone(),
+        #[cfg(windows)]
+        package_format: asset.package_format()?,
+        notes_body: manifest.notes.trim().to_string(),
+    }))
+}
+
 /// Check the hosted update manifest for the latest release. Returns release info if newer.
 fn first_windows_stable_is_pending(
     manifest: &UpdateManifest,
@@ -531,6 +607,10 @@ fn first_windows_stable_is_pending(
 }
 
 fn check_latest() -> Result<Option<ReleaseInfo>, String> {
+    if fork_updates_enabled() {
+        let manifest: PreviewManifest = fetch_json_manifest(FORK_UPDATE_MANIFEST_URL)?;
+        return release_info_from_fork_manifest(&manifest, current_fork_build_id());
+    }
     let channel = UpdateChannel::configured();
     if channel == UpdateChannel::Preview {
         return release_info_from_preview_manifest(&fetch_preview_manifest()?);
@@ -2106,17 +2186,13 @@ fn homebrew_cellar_keg_root(path: &Path) -> Option<PathBuf> {
 // ---------------------------------------------------------------------------
 
 /// Manual self-update command (`herdr update`).
-// fork: this build comes from the shirakawayohane/herdr fork. Installing an official
-// release over it would silently drop the fork's changes, so updates go through git.
-// Set HERDR_FORK_ALLOW_OFFICIAL_UPDATE=1 to deliberately go back to official releases.
-const FORK_ALLOW_OFFICIAL_UPDATE_ENV: &str = "HERDR_FORK_ALLOW_OFFICIAL_UPDATE";
-const FORK_UPDATE_MESSAGE: &str = "self-update is disabled for this fork build (shirakawayohane/herdr); rebuild it from the fork checkout instead";
-
 pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
-    if env::var_os(FORK_ALLOW_OFFICIAL_UPDATE_ENV).is_none() {
-        return Err(FORK_UPDATE_MESSAGE.into());
-    }
-    let channel = UpdateChannel::configured();
+    // fork: updates come from the fork's releases; see FORK_UPDATE_MANIFEST_URL.
+    let channel = if fork_updates_enabled() {
+        UpdateChannel::Fork
+    } else {
+        UpdateChannel::configured()
+    };
 
     if is_homebrew_managed_install() {
         if channel == UpdateChannel::Preview {
@@ -2355,12 +2431,6 @@ fn print_outdated_integration_notice_with_updated_binary(updated_exe: &Path) {
 /// Background update check: only surface availability and release notes.
 /// Runs in a background thread at startup.
 pub fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
-    // fork: never offer official releases; see FORK_UPDATE_MESSAGE.
-    if env::var_os(FAKE_UPDATE_VERSION_ENV).is_none()
-        && env::var_os(FORK_ALLOW_OFFICIAL_UPDATE_ENV).is_none()
-    {
-        return;
-    }
     crate::logging::update_check_started();
     if let Ok(version) = env::var(FAKE_UPDATE_VERSION_ENV) {
         let version = version.trim();
@@ -2384,7 +2454,8 @@ pub fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
     }
 
     let configured_channel = UpdateChannel::configured();
-    if is_homebrew_managed_install() {
+    // fork: fork builds update only from the fork's releases, not Homebrew.
+    if !fork_updates_enabled() && is_homebrew_managed_install() {
         if configured_channel == UpdateChannel::Preview {
             crate::logging::update_check_failed(
                 "preview channel is not available for Homebrew installs",
@@ -3851,6 +3922,60 @@ mod tests {
             &installed_base,
             false
         ));
+    }
+
+    // fork: fork.json uses the preview manifest shape with channel "fork".
+    fn fork_manifest(build_id: &str) -> PreviewManifest {
+        let (os, arch) = platform_target();
+        let json = format!(
+            r#"{{
+                "channel": "fork",
+                "base_version": "0.9.5",
+                "build_id": "{build_id}",
+                "commit": "abcdef1234567890",
+                "built_at": "2026-11-03T01:02:03Z",
+                "protocol": 22,
+                "endpoint_generation": 1,
+                "notes": "fork build",
+                "assets": {{
+                    "{os}-{arch}": {{
+                        "url": "https://example.com/herdr-{os}-{arch}",
+                        "sha256": "deadbeef"
+                    }}
+                }}
+            }}"#
+        );
+        serde_json::from_str(&json).unwrap()
+    }
+
+    #[test]
+    fn fork_manifest_offers_only_strictly_newer_builds() {
+        let manifest = fork_manifest("20261103010203-abcdef1");
+        let release = release_info_from_fork_manifest(&manifest, Some("20261102000000-1234567"))
+            .unwrap()
+            .expect("newer fork build");
+        assert_eq!(release.channel, UpdateChannel::Fork);
+        assert_eq!(release.identity, "0.9.5-fork.20261103010203-abcdef1");
+        assert_eq!(release.sha256.as_deref(), Some("deadbeef"));
+        #[cfg(not(windows))]
+        assert_eq!(release.target_endpoint_generation, Some(1));
+
+        for current in ["20261103010203-abcdef1", "20261104000000-7654321"] {
+            assert!(release_info_from_fork_manifest(&manifest, Some(current))
+                .unwrap()
+                .is_none());
+        }
+        // A build without a fork id (plain cargo build) always takes the release.
+        assert!(release_info_from_fork_manifest(&manifest, None)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn fork_manifest_rejects_other_channels() {
+        let mut manifest = fork_manifest("20261103010203-abcdef1");
+        manifest.channel = "preview".into();
+        assert!(release_info_from_fork_manifest(&manifest, None).is_err());
     }
 
     #[test]

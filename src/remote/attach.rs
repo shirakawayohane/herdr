@@ -2537,7 +2537,13 @@ fn remote_release_asset(asset_key: &str) -> io::Result<RemoteReleaseAsset> {
         });
     }
 
-    let current_version = current_version();
+    // fork: fork builds carry `-fork.<id>`; remote hosts on another platform
+    // get the official build of the same base version, as before.
+    let current_version = if current_channel() == "fork" {
+        crate::build_info::BASE_VERSION.to_string()
+    } else {
+        current_version()
+    };
     let manifest_bytes = fetch_remote_manifest(STABLE_UPDATE_MANIFEST_URL)?;
     let manifest: RemoteUpdateManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|err| io::Error::other(format!("failed to parse update manifest JSON: {err}")))?;

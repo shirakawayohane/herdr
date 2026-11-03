@@ -1,0 +1,211 @@
+# fork: build and publish shirakawayohane/herdr fork binaries on every push to
+# `custom`. Each run creates a `fork-<build id>` release (marked latest) with
+# the binaries and `fork.json`, which fork builds poll through
+# https://github.com/shirakawayohane/herdr/releases/latest/download/fork.json
+# (see FORK_UPDATE_MANIFEST_URL in src/update.rs).
+name: Fork release
+
+on:
+  push:
+    branches: [custom]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RUST_TOOLCHAIN_VERSION: 1.96.1
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    if: github.repository == 'shirakawayohane/herdr'
+    runs-on: ubuntu-latest
+    outputs:
+      build_id: ${{ steps.id.outputs.build_id }}
+      commit: ${{ steps.id.outputs.commit }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      # Keep in sync with fork/build-id.sh: UTC commit time, then the short sha,
+      # so build ids sort by commit time.
+      - id: id
+        run: |
+          echo "build_id=$(fork/build-id.sh)" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: preflight
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            name: herdr-linux-x86_64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            name: herdr-linux-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: herdr-macos-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: herdr-macos-aarch64
+    runs-on: ${{ matrix.os }}
+    env:
+      LIBGHOSTTY_VT_OPTIMIZE: ReleaseFast
+      LIBGHOSTTY_VT_SIMD: 'true'
+      HERDR_BUILD_CHANNEL: fork
+      HERDR_BUILD_ID: ${{ needs.preflight.outputs.build_id }}
+      HERDR_BUILD_COMMIT: ${{ needs.preflight.outputs.commit }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: ${{ matrix.target }}
+
+      - name: Install Zig
+        uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        with:
+          version: 0.16.0
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo find /etc/apt/sources.list.d -type f \( -iname '*microsoft*' -o -iname '*azure-cli*' \) -print -delete
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build musl-tools gcc-aarch64-linux-gnu crossbuild-essential-arm64
+
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install cmake ninja
+
+      - name: Set Linux aarch64 linker
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          key: fork-${{ matrix.target }}
+
+      - name: Remove Zig caches
+        run: rm -rf .zig-cache vendor/libghostty-vt/.zig-cache vendor/libghostty-vt/zig-out
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp target/${{ matrix.target }}/release/herdr ${{ matrix.name }}
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            ldd ${{ matrix.name }} > LDD_INFO.txt 2>&1 || true
+            grep -Eq "statically linked|not a dynamic executable" LDD_INFO.txt
+          fi
+          shasum -a 256 ${{ matrix.name }} | tee ${{ matrix.name }}.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            ${{ matrix.name }}
+            ${{ matrix.name }}.sha256
+
+  publish:
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      BUILD_ID: ${{ needs.preflight.outputs.build_id }}
+      COMMIT: ${{ needs.preflight.outputs.commit }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          persist-credentials: false
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Write fork.json
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re, datetime
+          root = pathlib.Path(".")
+          art = pathlib.Path("artifacts")
+          build_id = os.environ["BUILD_ID"]
+          commit = os.environ["COMMIT"]
+          tag = f"fork-{build_id}"
+          repo = os.environ["GH_REPO"]
+          cargo = (root / "Cargo.toml").read_text()
+          base_version = re.search(r'^version = "([^"]+)"', cargo, re.M).group(1)
+          protocol = int(re.search(r"pub const PROTOCOL_VERSION: u32 = (\d+);",
+                                   (root / "src/protocol/wire.rs").read_text()).group(1))
+          generation = int(re.search(r"pub const ENDPOINT_PROTOCOL_GENERATION: u32 = (\d+);",
+                                     (root / "src/protocol/endpoint.rs").read_text()).group(1))
+          assets = {}
+          for name in ["herdr-linux-x86_64", "herdr-linux-aarch64",
+                       "herdr-macos-x86_64", "herdr-macos-aarch64"]:
+              sha = (art / f"{name}.sha256").read_text().split()[0]
+              assets[name.removeprefix("herdr-")] = {
+                  "url": f"https://github.com/{repo}/releases/download/{tag}/{name}",
+                  "sha256": sha,
+              }
+          subject = os.popen("git log -1 --format=%s").read().strip()
+          manifest = {
+              "channel": "fork",
+              "base_version": base_version,
+              "build_id": build_id,
+              "commit": commit,
+              "built_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "protocol": protocol,
+              "endpoint_generation": generation,
+              "notes": f"fork build {build_id}\n\n{subject}",
+              "assets": assets,
+          }
+          (art / "fork.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+
+      - name: Publish release
+        run: |
+          set -euo pipefail
+          gh release create "fork-$BUILD_ID" \
+            --target "$COMMIT" \
+            --title "Fork build $BUILD_ID" \
+            --notes "Built from $COMMIT on the custom branch." \
+            --latest \
+            artifacts/herdr-* artifacts/fork.json
+
+      - name: Keep the newest 10 fork releases
+        run: |
+          set -euo pipefail
+          gh release list --limit 200 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("fork-"))] | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' \
+          | while read -r tag; do
+              gh release delete "$tag" --cleanup-tag --yes
+            done
