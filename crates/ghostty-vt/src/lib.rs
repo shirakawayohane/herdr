@@ -831,6 +831,50 @@ pub fn encode_focus(event: FocusEvent) -> Result<Vec<u8>, Error> {
     Ok(buffer)
 }
 
+// Unicode White_Space, matching Rust's char::is_whitespace URL boundaries.
+const LINK_BOUNDARIES: &[u32] = &[
+    9, 10, 11, 12, 13, 32, 0x85, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005,
+    0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+];
+
+// fork: how close to the right edge an app-wrapped row must end, and how many
+// rows one link may span through such breaks.
+const APP_WRAP_EDGE_SLACK: u16 = 8;
+const APP_WRAP_MAX_ROWS: usize = 32;
+
+struct AppWrapRow {
+    first: Option<u16>,
+    last: Option<u16>,
+    soft_wrapped: bool,
+    wrap_continuation: bool,
+}
+
+fn is_blank_graphemes(graphemes: &[u32]) -> bool {
+    graphemes
+        .first()
+        .copied()
+        .and_then(char::from_u32)
+        .is_none_or(char::is_whitespace)
+}
+
+/// fork: drop the newline and surrounding indent between app-wrapped rows.
+fn strip_app_wrap_breaks(text: &str) -> String {
+    let parts: Vec<&str> = text.split('\n').collect();
+    let last = parts.len().saturating_sub(1);
+    let mut out = String::with_capacity(text.len());
+    for (index, part) in parts.iter().enumerate() {
+        let mut part = *part;
+        if index > 0 {
+            part = part.trim_start();
+        }
+        if index < last {
+            part = part.trim_end();
+        }
+        out.push_str(part);
+    }
+    out
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum LinkTarget {
     Uri(String),
@@ -1369,20 +1413,22 @@ impl Terminal {
     pub fn viewport_link_target(&self, x: u16, y: u32) -> Result<Option<LinkTarget>, Error> {
         Ok(self
             .viewport_link_selection(x, y)?
-            .map(|(target, _)| target))
+            .map(|(target, _, _)| target))
     }
 
+    /// The token under the cell, its selection, and whether app-wrapped rows
+    /// were joined into it (fork).
     fn viewport_link_selection(
         &self,
         x: u16,
         y: u32,
-    ) -> Result<Option<(LinkTarget, Option<ffi::GhosttySelection>)>, Error> {
+    ) -> Result<Option<(LinkTarget, Option<ffi::GhosttySelection>, bool)>, Error> {
         let mut clicked = self.grid_ref(ghostty_viewport_point(x, y))?;
         if grid_ref_wide(&clicked)? == CellWide::SpacerTail {
             clicked.x = clicked.x.saturating_sub(1);
         }
         if let Some(uri) = grid_ref_hyperlink_uri(&clicked)? {
-            return Ok(Some((LinkTarget::Uri(uri), None)));
+            return Ok(Some((LinkTarget::Uri(uri), None, false)));
         }
         let graphemes = grid_ref_graphemes(&clicked)?;
         if graphemes
@@ -1393,36 +1439,37 @@ impl Terminal {
         {
             return Ok(None);
         }
-        // Unicode White_Space, matching Rust's char::is_whitespace URL boundaries.
-        const BOUNDARIES: &[u32] = &[
-            9, 10, 11, 12, 13, 32, 0x85, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004,
-            0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
-        ];
-        let options = ffi::GhosttyTerminalSelectWordOptions {
-            size: mem::size_of::<ffi::GhosttyTerminalSelectWordOptions>(),
-            ref_: clicked,
-            boundary_codepoints: BOUNDARIES.as_ptr(),
-            boundary_codepoints_len: BOUNDARIES.len(),
-        };
-        let mut selection = ffi::GhosttySelection::default();
-        // Bound work before formatting, even for an unbroken scrollback-sized token.
-        let result = unsafe {
-            ffi::ghostty_terminal_select_word_bounded(self.raw, &options, 8192, &mut selection)
-        };
-        if result == ffi::GhosttyResult_GHOSTTY_NO_VALUE {
+        let Some(selection) = self.select_link_word(clicked)? else {
             return Ok(None);
+        };
+        let format_from = |selection: &ffi::GhosttySelection| -> Result<(String, String), Error> {
+            let text = self.format_selection(selection, FormatterFormat::Plain, true, false)?;
+            let prefix = self.format_selection(
+                &ffi::GhosttySelection {
+                    end: clicked,
+                    ..*selection
+                },
+                FormatterFormat::Plain,
+                true,
+                false,
+            )?;
+            Ok((text, prefix))
+        };
+        // fork: follow the token across rows an app wrapped itself, but only
+        // when the joined token looks like a path or URL.
+        let (extended, joined) = self.extend_link_across_app_wraps(selection)?;
+        let mut joined_parts = None;
+        if joined {
+            let (text, prefix) = format_from(&extended)?;
+            let text = strip_app_wrap_breaks(&text);
+            if text.contains(['/', '\\']) {
+                joined_parts = Some((text, strip_app_wrap_breaks(&prefix)));
+            }
         }
-        result.into_result()?;
-        let text = self.format_selection(&selection, FormatterFormat::Plain, true, false)?;
-        let prefix = self.format_selection(
-            &ffi::GhosttySelection {
-                end: clicked,
-                ..selection
-            },
-            FormatterFormat::Plain,
-            true,
-            false,
-        )?;
+        let (selection, joined, (text, prefix)) = match joined_parts {
+            Some(parts) => (extended, true, parts),
+            None => (selection, false, format_from(&selection)?),
+        };
         let clicked_len: usize = graphemes
             .into_iter()
             .filter_map(char::from_u32)
@@ -1434,7 +1481,144 @@ impl Terminal {
                 clicked_byte: prefix.len().saturating_sub(clicked_len),
             },
             Some(selection),
+            joined,
         )))
+    }
+
+    fn select_link_word(
+        &self,
+        cell: ffi::GhosttyGridRef,
+    ) -> Result<Option<ffi::GhosttySelection>, Error> {
+        let options = ffi::GhosttyTerminalSelectWordOptions {
+            size: mem::size_of::<ffi::GhosttyTerminalSelectWordOptions>(),
+            ref_: cell,
+            boundary_codepoints: LINK_BOUNDARIES.as_ptr(),
+            boundary_codepoints_len: LINK_BOUNDARIES.len(),
+        };
+        let mut selection = ffi::GhosttySelection::default();
+        // Bound work before formatting, even for an unbroken scrollback-sized token.
+        let result = unsafe {
+            ffi::ghostty_terminal_select_word_bounded(self.raw, &options, 8192, &mut selection)
+        };
+        if result == ffi::GhosttyResult_GHOSTTY_NO_VALUE {
+            return Ok(None);
+        }
+        result.into_result()?;
+        Ok(Some(selection))
+    }
+
+    fn screen_coordinate(
+        &self,
+        grid_ref: &ffi::GhosttyGridRef,
+    ) -> Result<Option<(u16, u32)>, Error> {
+        let mut out = ffi::GhosttyPointCoordinate::default();
+        let result = unsafe {
+            ffi::ghostty_terminal_point_from_grid_ref(
+                self.raw,
+                grid_ref,
+                ffi::GhosttyPointTag_GHOSTTY_POINT_TAG_SCREEN,
+                &mut out,
+            )
+        };
+        if result == ffi::GhosttyResult_GHOSTTY_NO_VALUE {
+            return Ok(None);
+        }
+        result.into_result()?;
+        Ok(Some((out.x, out.y)))
+    }
+
+    /// fork: first/last non-blank columns and wrap flags of a screen row.
+    fn app_wrap_row(&self, y: u32) -> Result<AppWrapRow, Error> {
+        let cols = self.cols()?;
+        let mut grid_ref = self.grid_ref(ghostty_screen_point(0, y))?;
+        let (soft_wrapped, wrap_continuation) = grid_ref_wrap_state(&grid_ref)?;
+        let mut graphemes = Vec::new();
+        let (mut first, mut last) = (None, None);
+        for x in 0..cols {
+            grid_ref.x = x;
+            if grid_ref_wide(&grid_ref)? == CellWide::SpacerTail {
+                continue;
+            }
+            grid_ref_graphemes_into(&grid_ref, &mut graphemes)?;
+            if !is_blank_graphemes(&graphemes) {
+                first.get_or_insert(x);
+                last = Some(x);
+            }
+        }
+        Ok(AppWrapRow {
+            first,
+            last,
+            soft_wrapped,
+            wrap_continuation,
+        })
+    }
+
+    /// fork: apps such as Claude Code wrap a long path themselves (a real
+    /// newline plus an indent), so the word under the cursor stops at the row
+    /// edge. Extend the selection over such breaks: the row ends with the token
+    /// within APP_WRAP_EDGE_SLACK columns of the right edge, and the other row
+    /// starts indented at least as deep as the first row's text. Mirrors the
+    /// copy rule in herdr's `selection::rejoin_app_wrapped_lines`.
+    fn extend_link_across_app_wraps(
+        &self,
+        mut selection: ffi::GhosttySelection,
+    ) -> Result<(ffi::GhosttySelection, bool), Error> {
+        let cols = self.cols()?;
+        let total_rows = self.total_rows()?;
+        let near_edge = |last: u16| last + 1 + APP_WRAP_EDGE_SLACK >= cols;
+        let mut joined = false;
+        for _ in 0..APP_WRAP_MAX_ROWS {
+            let Some((end_x, end_y)) = self.screen_coordinate(&selection.end)? else {
+                break;
+            };
+            let next_y = end_y + 1;
+            if next_y as usize >= total_rows {
+                break;
+            }
+            let row = self.app_wrap_row(end_y)?;
+            if row.soft_wrapped || row.last != Some(end_x) || !near_edge(end_x) {
+                break;
+            }
+            let next = self.app_wrap_row(next_y)?;
+            let Some(indent) = next.first else {
+                break;
+            };
+            if next.wrap_continuation || indent == 0 || indent < row.first.unwrap_or(0) {
+                break;
+            }
+            let start = self.grid_ref(ghostty_screen_point(indent, next_y))?;
+            let Some(word) = self.select_link_word(start)? else {
+                break;
+            };
+            selection.end = word.end;
+            joined = true;
+        }
+        for _ in 0..APP_WRAP_MAX_ROWS {
+            let Some((start_x, start_y)) = self.screen_coordinate(&selection.start)? else {
+                break;
+            };
+            let Some(prev_y) = start_y.checked_sub(1) else {
+                break;
+            };
+            let row = self.app_wrap_row(start_y)?;
+            if row.wrap_continuation || start_x == 0 || row.first != Some(start_x) {
+                break;
+            }
+            let prev = self.app_wrap_row(prev_y)?;
+            let Some(last) = prev.last else {
+                break;
+            };
+            if prev.soft_wrapped || !near_edge(last) || prev.first.unwrap_or(0) > start_x {
+                break;
+            }
+            let end = self.grid_ref(ghostty_screen_point(last, prev_y))?;
+            let Some(word) = self.select_link_word(end)? else {
+                break;
+            };
+            selection.start = word.start;
+            joined = true;
+        }
+        Ok((selection, joined))
     }
 
     /// Resolve only the bounded plain-text token. OSC 8 regions are resolved by
@@ -1450,7 +1634,7 @@ impl Terminal {
         if x >= cols || y >= u32::from(rows) {
             return Ok(Vec::new());
         }
-        let Some((LinkTarget::Text { text, clicked_byte }, Some(selection))) =
+        let Some((LinkTarget::Text { text, clicked_byte }, Some(selection), joined)) =
             self.viewport_link_selection(x, y)?
         else {
             return Ok(Vec::new());
@@ -1509,7 +1693,22 @@ impl Terminal {
             true,
             false,
         )?;
-        let mut byte = prefix.len().saturating_sub(cell_len(&first)?);
+        // fork: joined app-wrapped rows drop their newline and indent from the
+        // text, so blank cells inside the token contribute no bytes.
+        let is_blank = |cell: &ffi::GhosttyGridRef| -> Result<bool, Error> {
+            Ok(joined && is_blank_graphemes(&grid_ref_graphemes(cell)?))
+        };
+        let prefix = if joined {
+            strip_app_wrap_breaks(&prefix)
+        } else {
+            prefix
+        };
+        let first_len = if is_blank(&first)? {
+            0
+        } else {
+            cell_len(&first)?
+        };
+        let mut byte = prefix.len().saturating_sub(first_len);
         let mut regions: Vec<LinkRegion> = Vec::new();
         for row in start_row..=end_row {
             let mut cell = self.grid_ref(ghostty_viewport_point(0, row))?;
@@ -1518,7 +1717,7 @@ impl Terminal {
             for col in left..=right {
                 cell.x = col;
                 let wide = grid_ref_wide(&cell)?;
-                if matches!(wide, CellWide::SpacerHead | CellWide::SpacerTail) {
+                if matches!(wide, CellWide::SpacerHead | CellWide::SpacerTail) || is_blank(&cell)? {
                     continue;
                 }
                 let len = cell_len(&cell)?;
@@ -4388,6 +4587,77 @@ mod tests {
             Some(LinkTarget::Text {
                 text: url.to_owned(),
                 clicked_byte: 0
+            })
+        );
+    }
+
+    // fork: paths an app wrapped itself (newline + indent) resolve as one link.
+    #[test]
+    fn link_target_joins_app_wrapped_path_rows() {
+        let mut terminal = Terminal::new(20, 4, 1024).unwrap();
+        terminal.write(b"  /abc/defghijklmno\r\n  pqr/stu.rs tail");
+        let joined = "/abc/defghijklmnopqr/stu.rs";
+        assert_eq!(
+            terminal.viewport_link_target(5, 0).unwrap(),
+            Some(LinkTarget::Text {
+                text: joined.into(),
+                clicked_byte: 3
+            })
+        );
+        assert_eq!(
+            terminal.viewport_link_target(3, 1).unwrap(),
+            Some(LinkTarget::Text {
+                text: joined.into(),
+                clicked_byte: 18
+            })
+        );
+        let regions = terminal
+            .viewport_link_regions(5, 0, |text, _| Some(0..text.len()))
+            .unwrap();
+        assert_eq!(
+            regions,
+            vec![
+                LinkRegion {
+                    row: 0,
+                    start_col: 2,
+                    end_col: 18
+                },
+                LinkRegion {
+                    row: 1,
+                    start_col: 2,
+                    end_col: 11
+                },
+            ]
+        );
+        let tail = terminal
+            .viewport_link_regions(3, 1, |text, _| text.find("stu").map(|i| i..i + 3))
+            .unwrap();
+        assert_eq!(
+            tail,
+            vec![LinkRegion {
+                row: 1,
+                start_col: 6,
+                end_col: 8
+            }]
+        );
+    }
+
+    #[test]
+    fn link_target_keeps_app_wrapped_rows_apart_without_path_or_indent() {
+        let mut terminal = Terminal::new(20, 4, 1024).unwrap();
+        terminal.write(b"  abcdefghijklmnopq\r\n  rest\r\n/abcdefghijklmnopqr\r\n/next");
+        assert_eq!(
+            terminal.viewport_link_target(5, 0).unwrap(),
+            Some(LinkTarget::Text {
+                text: "abcdefghijklmnopq".into(),
+                clicked_byte: 3
+            })
+        );
+        assert_eq!(
+            terminal.viewport_link_target(1, 2).unwrap(),
+            Some(LinkTarget::Text {
+                text: "/abcdefghijklmnopqr".into(),
+                clicked_byte: 1
             })
         );
     }
