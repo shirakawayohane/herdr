@@ -36,11 +36,15 @@ const MIN_AGENT_ROWS: u16 = 6;
 /// Width of the board column, including its left border.
 const BOARD_COLUMN_WIDTH: u16 = 34;
 
-/// The board column shows once any agent has a board. It does not follow
-/// focus, so switching panes never resizes them.
+/// fork: the column keeps its room whether or not any agent has a board,
+/// and also before the first snapshot arrives. Only a session without any
+/// agent gives it up. The client reports its pane size before the first
+/// snapshot, so a column that depended on boards resized every pane for a
+/// moment on each attach, and when the first board appeared or the last one
+/// went away. Apps such as Claude Code could keep drawing for the wider width
+/// and corrupt their screen.
 pub(super) fn board_column_width(snapshot: Option<&ClientShellSnapshot>) -> u16 {
-    if snapshot.is_some_and(|snapshot| snapshot.agents.iter().any(|agent| !agent.board.is_empty()))
-    {
+    if snapshot.is_none_or(|snapshot| !snapshot.agents.is_empty()) {
         BOARD_COLUMN_WIDTH
     } else {
         0

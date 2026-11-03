@@ -477,7 +477,14 @@ impl ClientShellConfig {
             .unwrap_or(self.sidebar_width)
             .clamp(min_width, max_width);
         let surface = self
-            .layout(cols, rows, sidebar_collapsed, 0, sidebar_width, 0)
+            .layout(
+                cols,
+                rows,
+                sidebar_collapsed,
+                0,
+                sidebar_width,
+                super::board_panel::board_column_width(None), // fork: match the attached layout
+            )
             .pane_surface;
         ClientSurfaceSize {
             cols: surface.width.max(1),

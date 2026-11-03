@@ -155,10 +155,18 @@ fn sidebar_lists_every_agents_asks_and_the_column_shows_the_focused_board() {
 }
 
 #[test]
-fn an_empty_board_takes_no_room() {
+fn the_column_keeps_its_room_without_any_board() {
+    // Pane sizes must not change when the first board appears or the last
+    // one goes away, or between attaching and the first snapshot.
     let state = board_state(vec![agent("pane_1", true, PaneBoard::default())]);
-    assert!(state.hits.board.is_empty());
-    assert_eq!(state.layout(120, 50).board.width, 0);
+    assert_eq!(state.layout(120, 50).board.width, 34);
+    let before_snapshot = ClientShellState::new(ClientShellConfig::from_config(
+        &crate::config::Config::default(),
+    ));
+    assert_eq!(
+        before_snapshot.surface_size(120, 50),
+        state.surface_size(120, 50)
+    );
 }
 
 #[test]
