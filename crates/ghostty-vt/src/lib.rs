@@ -1553,6 +1553,45 @@ impl Terminal {
         })
     }
 
+    /// fork: whether the break after column `last` of row `prev_y` can be an
+    /// app wrap: the row ends near the right edge, or (Codex, which breaks long
+    /// words only after `-`) it ends with `-` and the next row's first piece,
+    /// up to a space or through its first `-`, would not have fit after it.
+    fn app_wrap_break_fits(
+        &self,
+        prev_y: u32,
+        last: u16,
+        next_y: u32,
+        indent: u16,
+    ) -> Result<bool, Error> {
+        let cols = self.cols()?;
+        let free = cols.saturating_sub(last + 1);
+        if free <= APP_WRAP_EDGE_SLACK {
+            return Ok(true);
+        }
+        let mut graphemes = Vec::new();
+        let tail = self.grid_ref(ghostty_screen_point(last, prev_y))?;
+        grid_ref_graphemes_into(&tail, &mut graphemes)?;
+        if graphemes.as_slice() != ['-' as u32] {
+            return Ok(false);
+        }
+        let mut cell = self.grid_ref(ghostty_screen_point(indent, next_y))?;
+        for x in indent..cols {
+            cell.x = x;
+            if grid_ref_wide(&cell)? == CellWide::SpacerTail {
+                continue;
+            }
+            grid_ref_graphemes_into(&cell, &mut graphemes)?;
+            if is_blank_graphemes(&graphemes) {
+                return Ok(x - indent > free);
+            }
+            if graphemes.as_slice() == ['-' as u32] {
+                return Ok(x - indent + 1 > free);
+            }
+        }
+        Ok(cols - indent > free)
+    }
+
     /// fork: apps such as Claude Code wrap a long path themselves (a real
     /// newline plus an indent), so the word under the cursor stops at the row
     /// edge. Extend the selection over such breaks: the row ends with the token
@@ -1563,9 +1602,7 @@ impl Terminal {
         &self,
         mut selection: ffi::GhosttySelection,
     ) -> Result<(ffi::GhosttySelection, bool), Error> {
-        let cols = self.cols()?;
         let total_rows = self.total_rows()?;
-        let near_edge = |last: u16| last + 1 + APP_WRAP_EDGE_SLACK >= cols;
         let mut joined = false;
         for _ in 0..APP_WRAP_MAX_ROWS {
             let Some((end_x, end_y)) = self.screen_coordinate(&selection.end)? else {
@@ -1576,7 +1613,7 @@ impl Terminal {
                 break;
             }
             let row = self.app_wrap_row(end_y)?;
-            if row.soft_wrapped || row.last != Some(end_x) || !near_edge(end_x) {
+            if row.soft_wrapped || row.last != Some(end_x) {
                 break;
             }
             let next = self.app_wrap_row(next_y)?;
@@ -1584,6 +1621,9 @@ impl Terminal {
                 break;
             };
             if next.wrap_continuation || indent == 0 || indent < row.first.unwrap_or(0) {
+                break;
+            }
+            if !self.app_wrap_break_fits(end_y, end_x, next_y, indent)? {
                 break;
             }
             let start = self.grid_ref(ghostty_screen_point(indent, next_y))?;
@@ -1608,7 +1648,10 @@ impl Terminal {
             let Some(last) = prev.last else {
                 break;
             };
-            if prev.soft_wrapped || !near_edge(last) || prev.first.unwrap_or(0) > start_x {
+            if prev.soft_wrapped || prev.first.unwrap_or(0) > start_x {
+                break;
+            }
+            if !self.app_wrap_break_fits(prev_y, last, start_y, start_x)? {
                 break;
             }
             let end = self.grid_ref(ghostty_screen_point(last, prev_y))?;
@@ -4640,6 +4683,26 @@ mod tests {
                 end_col: 8
             }]
         );
+    }
+
+    #[test]
+    fn link_target_joins_codex_hyphen_break_far_from_edge() {
+        // 13 columns are left after "x-", but "herdr/79ac48f1-" (15) did not fit.
+        let mut terminal = Terminal::new(24, 4, 1024).unwrap();
+        terminal.write(b"  /tmp/a-x-\r\n  herdr/79ac48f1-f/z.rs");
+        let joined = "/tmp/a-x-herdr/79ac48f1-f/z.rs";
+        for (x, y) in [(4, 0), (5, 1)] {
+            assert!(matches!(
+                terminal.viewport_link_target(x, y).unwrap(),
+                Some(LinkTarget::Text { text, .. }) if text == joined
+            ));
+        }
+        let mut short = Terminal::new(24, 4, 1024).unwrap();
+        short.write(b"  /tmp/a-x-\r\n  ab/c.rs");
+        assert!(matches!(
+            short.viewport_link_target(4, 0).unwrap(),
+            Some(LinkTarget::Text { text, .. }) if text == "/tmp/a-x-"
+        ));
     }
 
     #[test]

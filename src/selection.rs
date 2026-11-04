@@ -394,7 +394,26 @@ fn write_osc52_bytes_with_match(
 // the previous row ends within WRAP_EDGE_SLACK columns of the right edge with a
 // non-space character, the next row is indented (at least as deep as the
 // previous one), and the token spanning the break looks like a path or URL.
+// Codex breaks long words only after a `-`, so its rows can end further from
+// the edge; a row ending in `-` also counts when the next row's first piece
+// (up to a space or its first `-`) would not have fit in the space left.
 const WRAP_EDGE_SLACK: usize = 8;
+
+/// fork: width of `body` up to its first space, or through its first `-`.
+fn first_wrap_segment_width(body: &str) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    let mut width = 0;
+    for ch in body.chars() {
+        if ch.is_whitespace() {
+            break;
+        }
+        width += ch.width().unwrap_or(0);
+        if ch == '-' {
+            break;
+        }
+    }
+    width
+}
 
 fn leading_space_width(line: &str) -> usize {
     use unicode_width::UnicodeWidthStr;
@@ -427,7 +446,9 @@ fn is_app_wrapped_break(prev: &str, prev_start_col: usize, next: &str, cols: usi
     }
     // A terminal soft-wrapped row is already unwrapped; look at its last row.
     let end_in_row = (end - 1) % cols + 1;
-    if end_in_row + WRAP_EDGE_SLACK < cols {
+    let free = cols.saturating_sub(end_in_row);
+    let hyphen_break = prev.ends_with('-') && first_wrap_segment_width(next_body) > free;
+    if free > WRAP_EDGE_SLACK && !hyphen_break {
         return false;
     }
     let tail = prev.rsplit(char::is_whitespace).next().unwrap_or_default();
@@ -598,6 +619,25 @@ mod rejoin_tests {
         let first = format!("  {}", "word ".repeat(19) + "word"); // 2 + 99
         let text = format!("{first}\n  continues here");
         assert_eq!(rejoin_app_wrapped_lines(&text, 0, 102), text);
+    }
+
+    #[test]
+    fn joins_codex_hyphen_break_far_from_edge() {
+        // Codex moved "herdr/79ac48f1-" (15 wide) down although 11 columns were left.
+        let cols = 140;
+        let first = format!("› {}/tmp/x-shirakawayohane-", "w".repeat(104)); // 129 wide
+        let text = format!("{first}\n  herdr/79ac48f1-f86b/file.txt");
+        assert_eq!(
+            rejoin_app_wrapped_lines(&text, 0, cols),
+            format!("{first}herdr/79ac48f1-f86b/file.txt")
+        );
+    }
+
+    #[test]
+    fn keeps_hyphen_break_when_next_piece_would_have_fit() {
+        let first = format!("  {}/tmp/x-", "w".repeat(80)); // 89 wide, 11 left
+        let text = format!("{first}\n  ab/c.txt");
+        assert_eq!(rejoin_app_wrapped_lines(&text, 0, 100), text);
     }
 
     #[test]
