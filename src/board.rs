@@ -198,6 +198,41 @@ fn clean_text(text: &str, max_chars: usize) -> Option<String> {
     Some(cut)
 }
 
+/// Image types a question sheet shows. SVG is left out: opened directly it
+/// could run script on the sheet's origin.
+pub(crate) fn image_content_type(path: &str) -> Option<&'static str> {
+    let extension = path.rsplit_once('.')?.1.to_ascii_lowercase();
+    Some(match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => return None,
+    })
+}
+
+/// The targets of the Markdown images (`![caption](target)`) in a detail.
+pub(crate) fn image_targets(detail: &str) -> Vec<&str> {
+    let mut targets = Vec::new();
+    let mut rest = detail;
+    while let Some(start) = rest.find("![") {
+        rest = &rest[start + 2..];
+        let Some(close) = rest.find("](") else { break };
+        if rest[..close].contains('\n') {
+            continue;
+        }
+        let after = &rest[close + 2..];
+        if let Some(end) = after.find(')') {
+            let target = &after[..end];
+            if !target.is_empty() && !target.contains(char::is_whitespace) {
+                targets.push(target);
+            }
+            rest = &after[end..];
+        }
+    }
+    targets
+}
+
 /// Markdown kept as written: line breaks and indentation stay, other control
 /// characters go, and long text is cut with an ellipsis.
 fn clean_block(text: &str, max_chars: usize) -> String {
@@ -245,6 +280,20 @@ mod tests {
             ..BoardAsk::default()
         };
         assert!(normalize_asks(vec![too_many]).is_err());
+    }
+
+    #[test]
+    fn image_targets_are_found_and_only_raster_images_are_served() {
+        let detail = "案A:\n![現在の画面](/tmp/a b.png)\n![案A](/tmp/a.png) と ![案B](https://x.test/b.jpg)\n[link](/tmp/c.png) ![broken](";
+        assert_eq!(
+            image_targets(detail),
+            ["/tmp/a.png", "https://x.test/b.jpg"]
+        );
+        assert_eq!(image_content_type("/tmp/A.PNG"), Some("image/png"));
+        assert_eq!(image_content_type("/tmp/a.jpeg"), Some("image/jpeg"));
+        for path in ["/tmp/a.svg", "/tmp/a", "/etc/passwd", "/tmp/a.png.txt"] {
+            assert_eq!(image_content_type(path), None, "{path}");
+        }
     }
 
     #[test]

@@ -5,7 +5,9 @@
 //! `http://127.0.0.1:<port>/<secret>/<pane id>` that shows every ask with the
 //! detail and options its agent wrote (`crate::board`), keeps the user's
 //! drafts, and sends the answers to the pane as the agent's next prompt. The
-//! board links to it (`PaneBoard::sheet_url`).
+//! board links to it (`PaneBoard::sheet_url`). Images an ask's detail embeds
+//! from local files (screenshots, mockups) are served too, but only the files
+//! that pane's asks name.
 //!
 //! The page is served by the Herdr server but is only an API client: it reads
 //! the board with `pane.get` and delivers answers with `agent.prompt`.
@@ -36,6 +38,7 @@ const STATE_FILE: &str = "sheet.json";
 const MAX_HEADER_BYTES: u64 = 16 * 1024;
 const MAX_BODY_BYTES: usize = 256 * 1024;
 const MAX_ANSWER_CHARS: usize = 8000;
+const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the previous server may keep the port during a live handoff.
 const REBIND_ATTEMPTS: u32 = 60;
@@ -266,6 +269,7 @@ fn handle_connection(mut stream: TcpStream) -> std::io::Result<()> {
 struct HttpRequest {
     method: String,
     path: String,
+    query: String,
     host: String,
     origin: Option<String>,
     content_type: String,
@@ -284,6 +288,12 @@ fn read_request(stream: impl Read) -> std::io::Result<HttpRequest> {
     let mut request = HttpRequest {
         method: method.to_string(),
         path: target.split(['?', '#']).next().unwrap_or("").to_string(),
+        query: target
+            .split('#')
+            .next()
+            .and_then(|target| target.split_once('?'))
+            .map(|(_, query)| query.to_string())
+            .unwrap_or_default(),
         ..HttpRequest::default()
     };
     let mut content_length = 0usize;
@@ -369,7 +379,8 @@ impl HttpResponse {
              Referrer-Policy: no-referrer\r\n\
              X-Content-Type-Options: nosniff\r\n\
              Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; \
-             style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; \
+             style-src 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self'; \
+             frame-ancestors 'none'; \
              base-uri 'none'; form-action 'none'\r\n\
              Connection: close\r\n\r\n",
             self.status,
@@ -416,8 +427,11 @@ fn respond(request: &HttpRequest, endpoint: &Endpoint, api: &mut dyn SheetApi) -
             Ok(None) => HttpResponse::error(404, "pane not found"),
             Err(err) => HttpResponse::error(503, &err),
         },
+        ("GET", Some("file")) => image(request, pane_id, api),
         ("POST", Some("answer")) => answer(request, endpoint, pane_id, api),
-        (_, None | Some("data" | "answer")) => HttpResponse::error(405, "method not allowed"),
+        (_, None | Some("data" | "answer" | "file")) => {
+            HttpResponse::error(405, "method not allowed")
+        }
         _ => HttpResponse::error(404, "not found"),
     }
 }
@@ -435,6 +449,70 @@ fn sheet_data(pane: &Value) -> Value {
         },
         "board": pane.get("board").cloned().unwrap_or_else(|| json!({})),
     })
+}
+
+/// A local image one of the pane's asks embeds. Nothing else on disk is
+/// served, whatever path is asked for.
+fn image(request: &HttpRequest, pane_id: &str, api: &mut dyn SheetApi) -> HttpResponse {
+    let Some(path) = request
+        .query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("path="))
+        .map(percent_decode)
+    else {
+        return HttpResponse::error(400, "path is required");
+    };
+    let Some(content_type) = crate::board::image_content_type(&path) else {
+        return HttpResponse::error(404, "not an image");
+    };
+    let pane = match api.pane(pane_id) {
+        Ok(Some(pane)) => pane,
+        Ok(None) => return HttpResponse::error(404, "pane not found"),
+        Err(err) => return HttpResponse::error(503, &err),
+    };
+    let named = pane
+        .pointer("/board/asks")
+        .and_then(Value::as_array)
+        .is_some_and(|asks| {
+            asks.iter()
+                .filter_map(|ask| ask.get("detail").and_then(Value::as_str))
+                .any(|detail| crate::board::image_targets(detail).contains(&path.as_str()))
+        });
+    if !named {
+        return HttpResponse::error(404, "not an image of this sheet");
+    }
+    let too_large = std::fs::metadata(&path).is_ok_and(|file| file.len() > MAX_IMAGE_BYTES);
+    match std::fs::read(&path) {
+        Ok(body) if !too_large => HttpResponse {
+            status: 200,
+            content_type,
+            body,
+        },
+        _ => HttpResponse::error(404, "image not found"),
+    }
+}
+
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let hex = (bytes[at] == b'%')
+            .then(|| text.get(at + 1..at + 3))
+            .flatten()
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        match hex {
+            Some(byte) => {
+                decoded.push(byte);
+                at += 3;
+            }
+            None => {
+                decoded.push(bytes[at]);
+                at += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 #[derive(Debug, Deserialize)]
@@ -669,6 +747,39 @@ mod tests {
     }
 
     #[test]
+    fn only_images_the_panes_asks_embed_are_served() {
+        let dir = std::env::temp_dir().join(format!("herdr-sheet-img-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let shown = dir.join("案 A.png");
+        let other = dir.join("other.png");
+        std::fs::write(&shown, b"png-bytes").unwrap();
+        std::fs::write(&other, b"secret").unwrap();
+        // The agent's path has no spaces; the query still arrives encoded.
+        let shown_plain = dir.join("a.png");
+        std::fs::rename(&shown, &shown_plain).unwrap();
+        let mut api = FakeApi {
+            pane: Some(json!({"board": {"asks": [
+                {"text": "Q1", "detail": format!("![案A]({})", shown_plain.display())},
+            ]}})),
+            ..FakeApi::default()
+        };
+        let file = |path: &std::path::Path| HttpRequest {
+            query: format!("path={}", path.display().to_string().replace('/', "%2F")),
+            ..get(&format!("{SHEET}/file"))
+        };
+        let served = respond(&file(&shown_plain), &endpoint(), &mut api);
+        assert_eq!((served.status, served.content_type), (200, "image/png"));
+        assert_eq!(served.body, b"png-bytes");
+        assert_eq!(respond(&file(&other), &endpoint(), &mut api).status, 404);
+        let passwd = file(std::path::Path::new("/etc/passwd"));
+        assert_eq!(respond(&passwd, &endpoint(), &mut api).status, 404);
+        let missing = get(&format!("{SHEET}/file"));
+        assert_eq!(respond(&missing, &endpoint(), &mut api).status, 400);
+        assert_eq!(percent_decode("%E6%A1%88%20a%2Fb%zz"), "案 a/b%zz");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn answers_reach_the_pane_as_one_prompt_that_repeats_each_question() {
         let mut api = FakeApi::default();
         let response = respond(
@@ -731,6 +842,7 @@ mod tests {
         let request = read_request(raw.as_bytes()).unwrap();
         assert_eq!(request.method, "POST");
         assert_eq!(request.path, "/s/w1:p2/answer");
+        assert_eq!(request.query, "x=1");
         assert_eq!(request.host, "127.0.0.1:4100");
         assert_eq!(request.content_type, "application/json");
         assert_eq!(request.body, b"{\"a\":1}");

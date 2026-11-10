@@ -50,6 +50,9 @@ header .where b { color: var(--ink); font-weight: 600; }
 .detail table { border-collapse: collapse; margin: 10px 0; display: block; overflow-x: auto; max-width: 100%; }
 .detail th, .detail td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; vertical-align: top; }
 .detail th { background: var(--code); font-weight: 600; }
+.detail .shot { display: block; margin: 12px 0; color: var(--muted); font-size: 13px; text-decoration: none; }
+.detail .shot img { display: block; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--code); }
+.detail .shot span { display: block; margin-top: 4px; }
 .detail hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
 a { color: var(--accent); }
 .answer { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
@@ -115,10 +118,17 @@ textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline
 /*md:start*/
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const A = ' target="_blank" rel="noreferrer noopener"';
+const imageBase = typeof location === 'undefined' ? '' : location.pathname.replace(/\/+$/, '');
 function inline(src) {
   return src.split(/(`[^`\n]+`)/g).map((part) => {
     if (/^`[^`\n]+`$/.test(part)) return '<code>' + esc(part.slice(1, -1)) + '</code>';
     let t = esc(part);
+    t = t.replace(/!\[([^\]\n]*)\]\(([^\s)]+)\)/g, (m, alt, target) => {
+      const raw = target.replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+      const src = /^(https:\/\/|data:image\/)/i.test(raw) ? target : esc(imageBase + '/file?path=' + encodeURIComponent(raw));
+      return '<a class="shot" href="' + src + '"' + A + '><img src="' + src + '" alt="' + alt + '" loading="lazy">' +
+        (alt ? '<span>' + alt + '</span>' : '') + '</a>';
+    });
     t = t.replace(/\[([^\]\n]+)\]\(([a-z][a-z0-9+.-]*:\/\/[^\s)]+)\)/gi, (m, label, url) =>
       /^(https?|file|vscode|codex|cursor|zed):/i.test(url) ? '<a href="' + url + '"' + A + '>' + label + '</a>' : m);
     t = t.replace(/(^|[\s(（「『、。：])(https?:\/\/[^\s<)）」』、。]+)/g, (m, pre, url) => pre + '<a href="' + url + '"' + A + '>' + url + '</a>');

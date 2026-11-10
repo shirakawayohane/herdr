@@ -60,7 +60,8 @@ same turn your reply asks, numbered like your reply (\"Q1 ...\"), and remove eac
 user has answered or done it. text is the one-line question the board shows. Decide for each \
 ask whether that line is enough. A simple question the user can answer at a glance, with \
 nothing to look up or weigh (\"テスト通知は届いたか？\", \"このまま push してよいか？\" right \
-after you showed the change), gets no detail: ask it in your reply and do not mention the \
+after you showed the change), gets no detail (never a question about how something looks, \
+which needs images in its detail): ask it in your reply and do not mention the \
 sheet. Anything that needs background to answer well, such as a choice between options, a \
 trade-off, or a question the user may read hours later without the conversation, gets detail: \
 those asks are the session's question sheet, a web page where the user reads each one in full \
@@ -90,7 +91,13 @@ which one you recommend and why; and what you will do if they have no preference
 the exact steps, commands or URLs, the thing itself when they are to check something (the full \
 text of a draft, the lines that changed), and how they tell you it is done. Explain any name or label \
 you made up during the work, and never write \"as discussed above\". Short paragraphs, lists, \
-tables and code blocks render.";
+tables and code blocks render. Images render too, written as ![caption](path) with the path of \
+a PNG, JPEG, GIF or WebP file on this machine (or an https URL). A question about how something \
+looks (a layout, colours, spacing, wording on a screen, a before and after, which of several \
+designs) is never a simple question and cannot be answered from words: show it. Take a \
+screenshot of the real screen, or render a mockup when it does not exist yet, one image per \
+option, each captioned with the name its option uses, plus the current state when the question \
+is about a change. Keep the files until the ask is answered.";
 
 const ASK_OPTIONS_DESCRIPTION: &str = "Answers the user can pick with one click. Each is a short \
 phrase that is a complete answer on its own (\"はい、削除する\", not \"A\"). Put the one you \
@@ -313,10 +320,17 @@ fn update_board(arguments: Value, pane_id: Option<&str>, panes: &mut dyn PaneSta
         _ => return tool_result("arguments must be an object", true),
     };
     arguments.insert("pane_id".into(), Value::String(pane_id.to_string()));
-    let params = match serde_json::from_value::<PaneBoardSetParams>(Value::Object(arguments)) {
+    let mut params = match serde_json::from_value::<PaneBoardSetParams>(Value::Object(arguments)) {
         Ok(params) => params,
         Err(err) => return tool_result(&format!("invalid board: {err}"), true),
     };
+    let cwd = std::env::current_dir().unwrap_or_default();
+    for ask in params.asks.iter_mut().flatten() {
+        match with_local_images_resolved(&ask.detail, &cwd) {
+            Ok(detail) => ask.detail = detail,
+            Err(err) => return tool_result(&format!("Not recorded. {err}"), true),
+        }
+    }
     if params.asks.is_none() && params.todos.is_none() && params.links.is_none() {
         return tool_result("pass at least one of asks, todos, links", true);
     }
@@ -354,6 +368,51 @@ fn update_board(arguments: Value, pane_id: Option<&str>, panes: &mut dyn PaneSta
     }
     lines.extend(bare.as_deref().and_then(missing_detail_hint));
     tool_result(&lines.join("\n"), false)
+}
+
+/// Rewrites the local images a detail embeds to absolute paths, which is what
+/// the question sheet serves, and refuses ones it could not show.
+fn with_local_images_resolved(detail: &str, cwd: &std::path::Path) -> Result<String, String> {
+    let mut resolved = detail.to_string();
+    for target in crate::board::image_targets(detail) {
+        if target.starts_with("https://") || target.starts_with("data:") {
+            continue;
+        }
+        if target.starts_with("http://") {
+            return Err(format!(
+                "The question sheet cannot show the image {target}: save it to a file and embed \
+                 the file's path, or use an https URL."
+            ));
+        }
+        let path = match target.strip_prefix("~/") {
+            Some(rest) => std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default()
+                .join(rest),
+            None => cwd.join(target.strip_prefix("file://").unwrap_or(target)),
+        };
+        if crate::board::image_content_type(target).is_none() {
+            return Err(format!(
+                "The question sheet shows PNG, JPEG, GIF and WebP images; {target} is not one."
+            ));
+        }
+        if !path.is_file() {
+            return Err(format!(
+                "The image {target} does not exist ({}). Create it first, and use a path \
+                 without spaces.",
+                path.display()
+            ));
+        }
+        let absolute = path.display().to_string();
+        if absolute.contains(char::is_whitespace) || absolute.contains(')') {
+            return Err(format!(
+                "The image path {absolute} contains a space or parenthesis; copy the file to a \
+                 path without them."
+            ));
+        }
+        resolved = resolved.replace(&format!("]({target})"), &format!("]({absolute})"));
+    }
+    Ok(resolved)
 }
 
 fn asks_without_detail(asks: &[crate::board::BoardAsk]) -> Vec<String> {
@@ -854,6 +913,44 @@ mod tests {
             json!({"asks": [{"kind": "decide", "text": "Q1", "detail": "d"}]}),
         );
         assert!(text(&result).contains("No question sheet"));
+    }
+
+    #[test]
+    fn images_in_a_detail_become_absolute_paths_and_missing_ones_are_refused() {
+        let dir = std::env::temp_dir().join(format!("herdr-mcp-img-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("shots")).unwrap();
+        std::fs::write(dir.join("shots/a.png"), b"png").unwrap();
+        let absolute = dir.join("shots/a.png").display().to_string();
+
+        let detail = "![案A](shots/a.png)\n![外部](https://x.test/b.png)";
+        assert_eq!(
+            with_local_images_resolved(detail, &dir).unwrap(),
+            format!("![案A]({absolute})\n![外部](https://x.test/b.png)")
+        );
+        let already = format!("![案A]({absolute})");
+        assert_eq!(with_local_images_resolved(&already, &dir).unwrap(), already);
+        assert_eq!(
+            with_local_images_resolved("画像なし", &dir).unwrap(),
+            "画像なし"
+        );
+        for bad in [
+            "![x](shots/none.png)",
+            "![x](shots/a.svg)",
+            "![x](http://x.test/a.png)",
+        ] {
+            assert!(with_local_images_resolved(bad, &dir).is_err(), "{bad}");
+        }
+
+        let mut panes = FakePanes::default();
+        let result = call(
+            &mut panes,
+            Some("w1:p2"),
+            UPDATE_BOARD_TOOL,
+            json!({"asks": [{"kind": "decide", "text": "Q1", "detail": "![x](/nonexistent/a.png)"}]}),
+        );
+        assert_eq!(result["isError"], true);
+        assert!(panes.board_sets.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
