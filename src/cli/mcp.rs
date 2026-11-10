@@ -58,10 +58,14 @@ can give; kind do = something only they can do (sign in, review, run a command).
 same turn your reply asks, numbered like your reply (\"Q1 ...\"), and remove each one once the \
 user has answered or done it. text is the one-line question the board shows. Always give detail \
 as well: the asks are the session's question sheet, a web page where the user reads each ask in \
-full and writes the answer, and this call returns its URL. Keep your reply short, give that URL \
-in it, and leave the background to the sheet. Answers written there come back to you as a \
-message starting with \"質問シートへの回答\"; an answer may also ask you for more explanation, in \
-which case improve the detail and keep the ask.\n\
+full and writes the answer, and this call returns its URL. The sheet is where questions get \
+answered, not a copy of your reply: when you need a decision, name each question in one line in \
+your reply, leave its background to the sheet, and close with one sentence that says where to \
+answer, with the URL (\"回答は質問シートからどうぞ: <URL>\"). Never print the URL on its own \
+without saying what it is for, and leave it out when nothing needs an answer, such as a reply \
+that only reports results or a kind do the user just carries out. Answers written there come \
+back to you as a message starting with \"質問シートへの回答\"; an answer may also ask you for \
+more explanation, in which case improve the detail and keep the ask.\n\
 - todos: the remaining steps of work with several steps, each named by what it achieves. Update \
 states as you go and clear the list when the work is finished.\n\
 - links: every URL the user may want to open again, so they never have to ask for it or search \
@@ -76,7 +80,8 @@ asked back instead of answered. Cover, in the user's language: what this is abou
 found, with the concrete facts (file names, numbers, error text, current behaviour); why it needs \
 them and what it blocks; each option with what it leads to (cost, risk, what changes for them); \
 which one you recommend and why; and what you will do if they have no preference. For kind do: \
-the exact steps, commands or URLs, and how they tell you it is done. Explain any name or label \
+the exact steps, commands or URLs, the thing itself when they are to check something (the full \
+text of a draft, the lines that changed), and how they tell you it is done. Explain any name or label \
 you made up during the work, and never write \"as discussed above\". Short paragraphs, lists, \
 tables and code blocks render.";
 
@@ -312,6 +317,10 @@ fn update_board(arguments: Value, pane_id: Option<&str>, panes: &mut dyn PaneSta
         return tool_result("nested agent; the pane's own agent keeps the board", false);
     }
     let asked = params.asks.as_ref().is_some_and(|asks| !asks.is_empty());
+    let needs_answer = params
+        .asks
+        .as_ref()
+        .is_some_and(|asks| asks.iter().any(|ask| ask.kind != AskKind::Do));
     let bare = params.asks.as_deref().map(asks_without_detail);
     if let Err(err) = panes.set_board(params) {
         return tool_result(&format!("herdr did not accept the board: {err}"), true);
@@ -319,9 +328,16 @@ fn update_board(arguments: Value, pane_id: Option<&str>, panes: &mut dyn PaneSta
     let mut lines = vec!["board updated".to_string()];
     if asked {
         match panes.board(pane_id).and_then(|board| board.sheet_url) {
+            Some(url) if needs_answer => lines.push(format!(
+                "Question sheet: {url}\nThe user reads the questions in full and answers them \
+                 there. In your reply, name each question in one line without repeating its \
+                 detail, and close with one sentence saying they can answer on the sheet, with \
+                 this URL."
+            )),
+            // Nothing to answer: the board already links to the sheet.
             Some(url) => lines.push(format!(
-                "Question sheet: {url}\nThe user reads the asks in full and answers them there. \
-                 Give this URL in your reply instead of repeating the detail."
+                "Question sheet: {url}\nThe board links to it, so leave the URL out of your \
+                 reply; these asks are things to do, not questions to answer."
             )),
             None => lines.push(
                 "No question sheet is being served, so your reply has to carry the full detail."
@@ -792,8 +808,22 @@ mod tests {
             reply.contains("Question sheet: http://127.0.0.1:4100/s/w1:p2"),
             "{reply}"
         );
+        assert!(reply.contains("close with one sentence"), "{reply}");
         assert!(reply.contains("no detail"), "{reply}");
         assert!(reply.contains("Q2 stg に再ログイン") && !reply.contains("Q1 削除してよいか"));
+
+        // Things to do are not questions, so the reply should not point at the sheet.
+        let result = call(
+            &mut panes,
+            Some("w1:p2"),
+            UPDATE_BOARD_TOOL,
+            json!({"asks": [{"kind": "do", "text": "下書きを確認して送信", "detail": "全文"}]}),
+        );
+        assert!(
+            text(&result).contains("leave the URL out"),
+            "{}",
+            text(&result)
+        );
 
         // Clearing asks or touching other lists says nothing about the sheet.
         for arguments in [json!({"asks": []}), json!({"links": []})] {
