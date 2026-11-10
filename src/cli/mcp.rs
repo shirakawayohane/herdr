@@ -40,10 +40,11 @@ watches many agent sessions at once. Before your final reply of every turn, call
 once so the user can tell which sessions need them, which are waiting on something, and which \
 can be closed. Keep the session's board current with update_board: what you need from the user \
 (asks), the remaining steps (todos), and every URL the user may want to open again (links). \
-Whenever you need an answer or an action from the user, put it on the board as an ask with its \
-detail in the same turn: Herdr turns the asks into the session's question sheet, a page the \
-user opens from the board to read the full background and write their answers, often much later \
-and without rereading the conversation. Their answers arrive as a normal message that starts \
+Whenever you need an answer or an action from the user, put it on the board as an ask in the \
+same turn. A question the user can answer at a glance from its one line just gets asked in your \
+reply; one that needs background gets its detail on the ask, which Herdr shows on the session's \
+question sheet, a page the user opens from the board to read the full background and write \
+their answers, often much later and without rereading the conversation. Their answers arrive as a normal message that starts \
 with \"質問シートへの回答\". The user reads the board and the sheet instead of scrolling back, so \
 do not repeat them at the end of every reply.";
 
@@ -56,14 +57,19 @@ you, and never naming the user in the third person (write \"Check the sidebar la
 - asks: everything you are waiting on the user for. kind decide = a decision or answer only they \
 can give; kind do = something only they can do (sign in, review, run a command). Add them in the \
 same turn your reply asks, numbered like your reply (\"Q1 ...\"), and remove each one once the \
-user has answered or done it. text is the one-line question the board shows. Always give detail \
-as well: the asks are the session's question sheet, a web page where the user reads each ask in \
-full and writes the answer, and this call returns its URL. The sheet is where questions get \
-answered, not a copy of your reply: when you need a decision, name each question in one line in \
-your reply, leave its background to the sheet, and close with one sentence that says where to \
-answer, with the URL (\"回答は質問シートからどうぞ: <URL>\"). Never print the URL on its own \
-without saying what it is for, and leave it out when nothing needs an answer, such as a reply \
-that only reports results or a kind do the user just carries out. Answers written there come \
+user has answered or done it. text is the one-line question the board shows. Decide for each \
+ask whether that line is enough. A simple question the user can answer at a glance, with \
+nothing to look up or weigh (\"テスト通知は届いたか？\", \"このまま push してよいか？\" right \
+after you showed the change), gets no detail: ask it in your reply and do not mention the \
+sheet. Anything that needs background to answer well, such as a choice between options, a \
+trade-off, or a question the user may read hours later without the conversation, gets detail: \
+those asks are the session's question sheet, a web page where the user reads each one in full \
+and writes the answer, and this call returns its URL. The sheet is where such questions get \
+answered, not a copy of your reply: name each question in one line in your reply, leave its \
+background to the sheet, and close with one sentence that says where to answer, with the URL \
+(\"回答は質問シートからどうぞ: <URL>\"). Never print the URL on its own without saying what it \
+is for, and leave it out when no ask has detail to read there, such as a reply that only \
+reports results, a simple question, or a kind do the user just carries out. Answers written there come \
 back to you as a message starting with \"質問シートへの回答\"; an answer may also ask you for \
 more explanation, in which case improve the detail and keep the ask.\n\
 - todos: the remaining steps of work with several steps, each named by what it achieves. Update \
@@ -74,7 +80,8 @@ preview or deploy. Add one as soon as the URL exists, label it by what it shows,
 when it stops working, for example after stopping the server.";
 
 const ASK_DETAIL_DESCRIPTION: &str = "Markdown shown under the question on the question sheet. \
-The user answers from the sheet alone, often hours later and between other sessions, so write it \
+Leave it out for a simple question the user can answer at a glance from the one line. Otherwise \
+the user answers from the sheet alone, often hours later and between other sessions, so write it \
 for someone who has forgotten this conversation; a question that leans on the conversation gets \
 asked back instead of answered. Cover, in the user's language: what this is about and what you \
 found, with the concrete facts (file names, numbers, error text, current behaviour); why it needs \
@@ -317,10 +324,10 @@ fn update_board(arguments: Value, pane_id: Option<&str>, panes: &mut dyn PaneSta
         return tool_result("nested agent; the pane's own agent keeps the board", false);
     }
     let asked = params.asks.as_ref().is_some_and(|asks| !asks.is_empty());
-    let needs_answer = params
-        .asks
-        .as_ref()
-        .is_some_and(|asks| asks.iter().any(|ask| ask.kind != AskKind::Do));
+    let needs_answer = params.asks.as_ref().is_some_and(|asks| {
+        asks.iter()
+            .any(|ask| ask.kind != AskKind::Do && !ask.detail.trim().is_empty())
+    });
     let bare = params.asks.as_deref().map(asks_without_detail);
     if let Err(err) = panes.set_board(params) {
         return tool_result(&format!("herdr did not accept the board: {err}"), true);
@@ -334,10 +341,10 @@ fn update_board(arguments: Value, pane_id: Option<&str>, panes: &mut dyn PaneSta
                  detail, and close with one sentence saying they can answer on the sheet, with \
                  this URL."
             )),
-            // Nothing to answer: the board already links to the sheet.
+            // Nothing to read there before answering: the board's own link is enough.
             Some(url) => lines.push(format!(
                 "Question sheet: {url}\nThe board links to it, so leave the URL out of your \
-                 reply; these asks are things to do, not questions to answer."
+                 reply; none of these asks is a question with detail to read there."
             )),
             None => lines.push(
                 "No question sheet is being served, so your reply has to carry the full detail."
@@ -359,9 +366,9 @@ fn asks_without_detail(asks: &[crate::board::BoardAsk]) -> Vec<String> {
 fn missing_detail_hint(bare: &[String]) -> Option<String> {
     (!bare.is_empty()).then(|| {
         format!(
-            "These asks have no detail, so the question sheet shows only their one line: {}. \
-             Call update_board again with detail the user can answer from without the \
-             conversation.",
+            "These asks have no detail: {}. That is right for a simple question the user can \
+             answer at a glance. If one needs background to answer well, call update_board again \
+             with detail the user can answer from without the conversation.",
             bare.join(" / ")
         )
     })
@@ -459,9 +466,6 @@ fn board_hints(phase: &str, board: &PaneBoard) -> Vec<String> {
             "Board asks still open: {asks}. Remove the ones the user has answered or done with \
              update_board."
         ));
-        if phase == PHASE_QUESTION {
-            hints.extend(missing_detail_hint(&asks_without_detail(&board.asks)));
-        }
     }
     let open_todos = board
         .todos
@@ -825,6 +829,17 @@ mod tests {
             text(&result)
         );
 
+        // A simple question is asked in the reply; the sheet is not advertised for it.
+        let result = call(
+            &mut panes,
+            Some("w1:p2"),
+            UPDATE_BOARD_TOOL,
+            json!({"asks": [{"kind": "decide", "text": "Q1 テスト通知は届いたか"}]}),
+        );
+        let reply = text(&result);
+        assert!(reply.contains("leave the URL out"), "{reply}");
+        assert!(reply.contains("right for a simple question"), "{reply}");
+
         // Clearing asks or touching other lists says nothing about the sheet.
         for arguments in [json!({"asks": []}), json!({"links": []})] {
             let result = call(&mut panes, Some("w1:p2"), UPDATE_BOARD_TOOL, arguments);
@@ -876,13 +891,6 @@ mod tests {
         let result = set_status(&mut panes, Some("w1:p2"), json!({"status": "done"}));
         assert!(text(&result).contains("[do] stg に再ログイン"));
         assert!(text(&result).contains("1 board todos"));
-        assert!(!text(&result).contains("no detail"));
-
-        let result = set_status(&mut panes, Some("w1:p2"), json!({"status": "question"}));
-        assert!(text(&result).contains("no detail"), "{}", text(&result));
-        panes.board.asks[0].detail = "手順: ...".into();
-        let result = set_status(&mut panes, Some("w1:p2"), json!({"status": "question"}));
-        assert!(!text(&result).contains("no detail"));
 
         panes.board = PaneBoard::default();
         let result = set_status(&mut panes, Some("w1:p2"), json!({"status": "done"}));
