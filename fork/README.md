@@ -32,6 +32,7 @@ fork/install.sh
 ビルド → `~/.local/bin/herdr` へ配置 → 動いているサーバーを live handoff で新バイナリへ引き継ぐ（ペインのプロセスは止まらない）。
 
 - 引き継ぎ後、画面（クライアント）は閉じるので、ターミナルで `herdr` を打ち直す。リンク判定はクライアント側にもあるため、開き直さないと改造が効かない
+- macOS では入れ替えのたびに、毎回同じ証明書（キーチェーンの Apple Development か Developer ID。`HERDR_CODESIGN_IDENTITY` で指定可）と同じ名前 `dev.herdr.fork` で署名し直す。`fork/install.sh` と `herdr update`（`src/update.rs` の `sign_with_local_identity`）の両方で行う。こうしないと入れ替えのたびに別アプリ扱いになり、デスクトップ／ダウンロード等へのアクセス許可を毎回聞き直される。証明書が無い・期限切れのときは署名せずに入れ替えだけ行う（その回は聞き直される）
 - ビルドには Zig 0.16.0 が必要。`~/.local/share/zig/0.16.0` に置いてある（Homebrew の zig は 0.17 で通らない）。別の場所なら `ZIG=/path/to/zig fork/install.sh`
 
 ## upstream への追従

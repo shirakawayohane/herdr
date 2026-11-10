@@ -801,10 +801,64 @@ fn download_update(release: &ReleaseInfo) -> Result<DownloadedUpdate, String> {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    sign_with_local_identity(&tmp_path);
+
     Ok(DownloadedUpdate {
         current_exe,
         tmp_path: Some(tmp_path),
     })
+}
+
+/// The name macOS files this binary's folder-access grants under. `fork/install.sh` signs with
+/// the same one, so a grant survives both ways of replacing the binary.
+#[cfg(any(target_os = "macos", test))]
+const FORK_CODESIGN_IDENTIFIER: &str = "dev.herdr.fork";
+
+/// Picks the first usable signing certificate out of `security find-identity -v -p codesigning`.
+#[cfg(any(target_os = "macos", test))]
+fn first_codesign_identity(find_identity_output: &str) -> Option<&str> {
+    find_identity_output
+        .lines()
+        .filter(|line| {
+            line.contains("Apple Development") || line.contains("Developer ID Application")
+        })
+        .find_map(|line| line.split_whitespace().nth(1))
+}
+
+/// macOS remembers "may read Desktop / Downloads" per code signature. A binary as built is signed
+/// with nothing but its own hash, so every replacement looks like a new app and macOS asks again.
+/// Re-sign with this Mac's own certificate and a fixed name so one grant carries over.
+/// Never blocks an update: without a certificate the binary is left as downloaded.
+#[cfg(target_os = "macos")]
+fn sign_with_local_identity(path: &Path) {
+    let identity = match env::var("HERDR_CODESIGN_IDENTITY") {
+        Ok(identity) if !identity.is_empty() => Some(identity),
+        _ => Command::new("/usr/bin/security")
+            .args(["find-identity", "-v", "-p", "codesigning"])
+            .output()
+            .ok()
+            .and_then(|output| {
+                first_codesign_identity(&String::from_utf8_lossy(&output.stdout)).map(str::to_owned)
+            }),
+    };
+    let Some(identity) = identity else {
+        tracing::warn!("no code signing certificate; macOS will ask for folder access again");
+        return;
+    };
+    let signed = Command::new("/usr/bin/codesign")
+        .args(["--force", "--sign", &identity, "--identifier"])
+        .arg(FORK_CODESIGN_IDENTIFIER)
+        .arg(path)
+        .output();
+    match signed {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => tracing::warn!(
+            "codesign failed; macOS will ask for folder access again: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+        Err(err) => tracing::warn!("codesign could not run: {err}"),
+    }
 }
 
 #[cfg(not(windows))]
@@ -2897,6 +2951,16 @@ mod tests {
             crate::client::endpoint::SavedSshEndpoint::new(label, target, "default").unwrap();
         profile.enabled = enabled;
         profile
+    }
+
+    #[test]
+    fn first_codesign_identity_picks_a_developer_certificate() {
+        let output = "  1) AAAA1111 \"Mac Installer Distribution: Someone (TEAM)\"\n  2) BBBB2222 \"Apple Development: Someone (ABCDE12345)\"\n     2 valid identities found\n";
+        assert_eq!(first_codesign_identity(output), Some("BBBB2222"));
+        assert_eq!(
+            first_codesign_identity("     0 valid identities found\n"),
+            None
+        );
     }
 
     #[test]

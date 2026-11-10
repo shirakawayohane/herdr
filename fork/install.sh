@@ -21,6 +21,21 @@ NEW_VERSION="$("$REPO/target/release/herdr" --version | awk '{print $2}')"
 
 # 実行中のファイルを直接上書きしないよう、別名で置いてから差し替える
 install -m 755 "$REPO/target/release/herdr" "$DEST.new"
+
+# macOS は「デスクトップ／ダウンロードへのアクセス許可」をバイナリの署名で覚える。
+# ビルドしたままの署名は中身のハッシュそのものなので、入れ替えるたびに別アプリ扱いになり
+# 許可を聞き直される。毎回同じ証明書・同じ名前で署名し直して、一度の許可を持ち越す。
+# 証明書が無い環境では何もしない（HERDR_CODESIGN_IDENTITY で指定も可）
+if [ "$(uname)" = "Darwin" ]; then
+  SIGN_ID="${HERDR_CODESIGN_IDENTITY:-$(security find-identity -v -p codesigning | awk '/Apple Development|Developer ID Application/ {print $2; exit}')}"
+  if [ -n "$SIGN_ID" ]; then
+    codesign --force --sign "$SIGN_ID" --identifier dev.herdr.fork "$DEST.new" ||
+      echo "codesign failed; macOS will ask for folder access again after this install" >&2
+  else
+    echo "codesign identity not found; macOS will ask for folder access again after each install" >&2
+  fi
+fi
+
 mv -f "$DEST.new" "$DEST"
 echo "installed $DEST ($NEW_VERSION, $(git rev-parse --short HEAD))"
 
