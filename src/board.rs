@@ -5,13 +5,21 @@
 //! worth keeping open (`links`). Replacing whole lists keeps the board in step
 //! with the agent even when it forgets an earlier entry. The client sidebar
 //! shows every pane's asks and the focused pane's todos and links.
+//!
+//! The board itself only has room for one line per ask, so each ask also
+//! carries what the user needs to answer it (`detail`, `options`). Those are
+//! shown on the pane's question sheet (`crate::sheet`), a web page the board
+//! links to (`sheet_url`), and never sent to the terminal client.
 
 use serde::{Deserialize, Serialize};
 
 pub(crate) const MAX_ASKS: usize = 10;
 pub(crate) const MAX_TODOS: usize = 20;
 pub(crate) const MAX_LINKS: usize = 10;
+pub(crate) const MAX_OPTIONS: usize = 6;
 const MAX_TEXT_CHARS: usize = 160;
+const MAX_DETAIL_CHARS: usize = 6000;
+const MAX_OPTION_CHARS: usize = 120;
 const MAX_LABEL_CHARS: usize = 60;
 const MAX_URL_CHARS: usize = 2048;
 
@@ -23,20 +31,41 @@ pub struct PaneBoard {
     pub todos: Vec<BoardTodo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<BoardLink>,
+    /// Where the user reads the asks in full and answers them. Filled in by
+    /// the server when it reports a board with asks; never stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet_url: Option<String>,
 }
 
 impl PaneBoard {
     pub fn is_empty(&self) -> bool {
         self.asks.is_empty() && self.todos.is_empty() && self.links.is_empty()
     }
+
+    /// The board as the terminal client draws it: one line per ask. The
+    /// question sheet's text stays out of client snapshots.
+    pub(crate) fn for_client(mut self) -> Self {
+        for ask in &mut self.asks {
+            ask.detail = String::new();
+            ask.options = Vec::new();
+        }
+        self
+    }
 }
 
 /// Something the agent needs from the user.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BoardAsk {
     #[serde(default)]
     pub kind: AskKind,
     pub text: String,
+    /// Markdown for the question sheet: everything the user needs to answer
+    /// without going back to the conversation.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
+    /// Answers the user can pick on the question sheet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
 }
 
 #[derive(
@@ -86,9 +115,22 @@ pub(crate) fn normalize_asks(asks: Vec<BoardAsk>) -> Result<Vec<BoardAsk>, Strin
             Some(BoardAsk {
                 kind: ask.kind,
                 text: clean_text(&ask.text, MAX_TEXT_CHARS)?,
+                detail: clean_block(&ask.detail, MAX_DETAIL_CHARS),
+                options: ask
+                    .options
+                    .iter()
+                    .filter_map(|option| clean_text(option, MAX_OPTION_CHARS))
+                    .collect(),
             })
         })
         .collect::<Vec<_>>();
+    if let Some(ask) = asks.iter().find(|ask| ask.options.len() > MAX_OPTIONS) {
+        return Err(format!(
+            "an ask may offer at most {MAX_OPTIONS} options; \"{}\" has {}",
+            ask.text,
+            ask.options.len()
+        ));
+    }
     within_limit(asks, MAX_ASKS, "asks")
 }
 
@@ -156,9 +198,72 @@ fn clean_text(text: &str, max_chars: usize) -> Option<String> {
     Some(cut)
 }
 
+/// Markdown kept as written: line breaks and indentation stay, other control
+/// characters go, and long text is cut with an ellipsis.
+fn clean_block(text: &str, max_chars: usize) -> String {
+    let text = text
+        .replace("\r\n", "\n")
+        .chars()
+        .filter(|ch| !ch.is_control() || matches!(ch, '\n' | '\t'))
+        .collect::<String>();
+    let text = text.trim_matches('\n').trim_end();
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut cut = text.chars().take(max_chars - 1).collect::<String>();
+    cut.push('…');
+    cut
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ask_detail_keeps_its_lines_and_options_become_single_lines() {
+        let asks = normalize_asks(vec![BoardAsk {
+            kind: AskKind::Decide,
+            text: "Q1 削除してよいか".into(),
+            detail: "\n## 背景\r\n- a\n  - b\u{7}\n\n".into(),
+            options: vec![" はい\n(推奨) ".into(), " ".into(), "いいえ".into()],
+        }])
+        .unwrap();
+        assert_eq!(asks[0].detail, "## 背景\n- a\n  - b");
+        assert_eq!(asks[0].options, ["はい (推奨)", "いいえ"]);
+
+        let long = normalize_asks(vec![BoardAsk {
+            text: "q".into(),
+            detail: "あ".repeat(MAX_DETAIL_CHARS + 1),
+            ..BoardAsk::default()
+        }])
+        .unwrap();
+        assert_eq!(long[0].detail.chars().count(), MAX_DETAIL_CHARS);
+
+        let too_many = BoardAsk {
+            text: "q".into(),
+            options: (0..=MAX_OPTIONS).map(|n| n.to_string()).collect(),
+            ..BoardAsk::default()
+        };
+        assert!(normalize_asks(vec![too_many]).is_err());
+    }
+
+    #[test]
+    fn the_client_board_drops_what_only_the_sheet_shows() {
+        let board = PaneBoard {
+            asks: vec![BoardAsk {
+                kind: AskKind::Do,
+                text: "stg に再ログイン".into(),
+                detail: "手順".into(),
+                options: vec!["済".into()],
+            }],
+            sheet_url: Some("http://127.0.0.1:1/s/w1:p1".into()),
+            ..PaneBoard::default()
+        }
+        .for_client();
+        assert_eq!(board.asks[0].text, "stg に再ログイン");
+        assert!(board.asks[0].detail.is_empty() && board.asks[0].options.is_empty());
+        assert!(board.sheet_url.is_some());
+    }
 
     #[test]
     fn text_becomes_one_trimmed_line_and_blank_entries_drop() {
@@ -187,6 +292,7 @@ mod tests {
         let asks = normalize_asks(vec![BoardAsk {
             kind: AskKind::Do,
             text: "あ".repeat(MAX_TEXT_CHARS + 5),
+            ..BoardAsk::default()
         }])
         .unwrap();
         assert_eq!(asks[0].text.chars().count(), MAX_TEXT_CHARS);
@@ -197,8 +303,8 @@ mod tests {
     fn too_many_entries_are_rejected() {
         let asks = (0..=MAX_ASKS)
             .map(|index| BoardAsk {
-                kind: AskKind::Decide,
                 text: format!("q{index}"),
+                ..BoardAsk::default()
             })
             .collect();
         assert!(normalize_asks(asks).is_err());

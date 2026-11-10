@@ -173,7 +173,8 @@ pub(super) fn snapshot_with_completions(
                 state_labels,
                 tokens,
                 focused,
-                board: agent.board,
+                // fork: the sheet's text is not drawn in the terminal.
+                board: agent.board.for_client(),
             }
         })
         .collect();

@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>質問シート</title>
+<style>
+:root {
+  --bg: #f6f5f1; --card: #ffffff; --ink: #1f2328; --muted: #6b7280; --line: #e3e1da;
+  --accent: #2f6feb; --accent-ink: #ffffff; --soft: #eef3fe; --code: #f1efe9;
+  --decide: #b4232c; --decide-bg: #fdecec; --do: #9a5b00; --do-bg: #fdf1dc; --ok: #1a7f4b; --ok-bg: #e7f6ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c; --card: #1f2227; --ink: #e6e8eb; --muted: #9aa1ab; --line: #30343b;
+    --accent: #6ea0ff; --accent-ink: #0d1117; --soft: #1e2a44; --code: #2a2e35;
+    --decide: #ff8f8f; --decide-bg: #3a2022; --do: #f0b866; --do-bg: #3a2e18; --ok: #6fd39b; --ok-bg: #173325;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.75 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Segoe UI", sans-serif;
+}
+.wrap { max-width: 780px; margin: 0 auto; padding: 28px 16px 140px; }
+header h1 { font-size: 20px; margin: 0 0 2px; letter-spacing: .02em; }
+header .where { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+header .where b { color: var(--ink); font-weight: 600; }
+.notice { margin: 20px 0; padding: 14px 16px; border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin: 18px 0; }
+.card.sent { border-color: var(--ok); }
+.head { display: flex; gap: 10px; align-items: baseline; }
+.chip { flex: none; font-size: 12px; font-weight: 700; padding: 1px 9px; border-radius: 999px; }
+.chip.decide { color: var(--decide); background: var(--decide-bg); }
+.chip.do { color: var(--do); background: var(--do-bg); }
+.head h2 { font-size: 17px; line-height: 1.5; margin: 0; overflow-wrap: anywhere; }
+.detail { margin: 12px 0 4px; overflow-wrap: anywhere; }
+.detail.none { color: var(--muted); font-size: 13px; }
+.detail > :first-child { margin-top: 0; }
+.detail > :last-child { margin-bottom: 0; }
+.detail h3, .detail h4, .detail h5, .detail h6 { font-size: 14px; margin: 16px 0 4px; color: var(--muted); letter-spacing: .04em; }
+.detail p { margin: 8px 0; }
+.detail ul, .detail ol { margin: 6px 0; padding-left: 1.5em; }
+.detail li { margin: 2px 0; }
+.detail code { background: var(--code); border-radius: 4px; padding: 1px 5px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.detail pre { background: var(--code); border-radius: 8px; padding: 10px 12px; overflow-x: auto; margin: 10px 0; }
+.detail pre code { background: none; padding: 0; }
+.detail blockquote { margin: 10px 0; padding: 2px 12px; border-left: 3px solid var(--line); color: var(--muted); }
+.detail table { border-collapse: collapse; margin: 10px 0; display: block; overflow-x: auto; max-width: 100%; }
+.detail th, .detail td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; vertical-align: top; }
+.detail th { background: var(--code); font-weight: 600; }
+.detail hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+a { color: var(--accent); }
+.answer { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.options { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.options button {
+  font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 12px; cursor: pointer; text-align: left;
+}
+.options button:hover { border-color: var(--accent); }
+.options button[aria-pressed="true"] { background: var(--soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+textarea {
+  display: block; width: 100%; min-height: 64px; resize: vertical; font: inherit; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px;
+}
+textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sentbox { display: none; margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: var(--ok-bg); }
+.sentbox .label { color: var(--ok); font-weight: 700; font-size: 13px; }
+.sentbox pre { margin: 4px 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.card.sent .sentbox { display: block; }
+.card.sent .answer { display: none; }
+.link { font: inherit; font-size: 13px; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
+.extra h3 { font-size: 13px; color: var(--muted); letter-spacing: .06em; margin: 26px 0 6px; }
+.extra ul { list-style: none; margin: 0; padding: 0; }
+.extra li { padding: 2px 0; overflow-wrap: anywhere; }
+.extra .done { color: var(--muted); text-decoration: line-through; }
+.extra .mark { display: inline-block; width: 1.4em; color: var(--muted); }
+.bar {
+  position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+}
+.bar .in { max-width: 780px; margin: 0 auto; display: flex; gap: 10px; align-items: center; }
+.bar .msg { flex: 1; min-width: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.bar .msg.err { color: var(--decide); }
+.bar .msg.ok { color: var(--ok); }
+.btn { flex: none; font: inherit; font-weight: 700; border-radius: 9px; padding: 8px 16px; cursor: pointer; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn:disabled { opacity: .45; cursor: default; }
+@media (max-width: 520px) { .bar .in { flex-wrap: wrap; } .bar .msg { flex-basis: 100%; } .btn { flex: 1; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>質問シート</h1>
+    <div class="where" id="where">読み込み中…</div>
+  </header>
+  <div id="notice" class="notice" hidden></div>
+  <main id="asks"></main>
+  <section id="noteCard" class="card" hidden>
+    <div class="head"><h2>全体への補足（任意）</h2></div>
+    <div class="answer" style="border-top:0;padding-top:0;margin-top:10px">
+      <textarea id="note" placeholder="個別の質問に収まらない指示や前提があれば書く"></textarea>
+    </div>
+  </section>
+  <section class="extra" id="extra"></section>
+</div>
+<div class="bar"><div class="in">
+  <div class="msg" id="msg"></div>
+  <button class="btn" id="copy" type="button" disabled>コピー</button>
+  <button class="btn primary" id="send" type="button" disabled>回答を送信</button>
+</div></div>
+<script>
+/*md:start*/
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const A = ' target="_blank" rel="noreferrer noopener"';
+function inline(src) {
+  return src.split(/(`[^`\n]+`)/g).map((part) => {
+    if (/^`[^`\n]+`$/.test(part)) return '<code>' + esc(part.slice(1, -1)) + '</code>';
+    let t = esc(part);
+    t = t.replace(/\[([^\]\n]+)\]\(([a-z][a-z0-9+.-]*:\/\/[^\s)]+)\)/gi, (m, label, url) =>
+      /^(https?|file|vscode|codex|cursor|zed):/i.test(url) ? '<a href="' + url + '"' + A + '>' + label + '</a>' : m);
+    t = t.replace(/(^|[\s(（「『、。：])(https?:\/\/[^\s<)）」』、。]+)/g, (m, pre, url) => pre + '<a href="' + url + '"' + A + '>' + url + '</a>');
+    t = t.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    t = t.replace(/(^|[^*\w])\*([^*\s][^*\n]*)\*(?![*\w])/g, '$1<em>$2</em>');
+    return t;
+  }).join('');
+}
+function listHtml(items) {
+  let html = '';
+  const stack = [];
+  for (const it of items) {
+    const tag = it.ordered ? 'ol' : 'ul';
+    while (stack.length > 1 && it.indent < stack[stack.length - 1].indent) html += '</li></' + stack.pop().tag + '>';
+    // A bullet list followed by a numbered one at the same depth is two lists.
+    if (stack.length && it.indent <= stack[stack.length - 1].indent && stack[stack.length - 1].tag !== tag) {
+      html += '</li></' + stack.pop().tag + '>';
+    }
+    const top = stack[stack.length - 1];
+    if (!top || it.indent > top.indent || top.tag !== tag) {
+      // A numbered list resumed after a code block keeps counting.
+      html += '<' + tag + (it.ordered && it.start > 1 ? ' start="' + it.start + '"' : '') + '>';
+      stack.push({ indent: it.indent, tag });
+    } else {
+      html += '</li>';
+    }
+    html += '<li>' + it.lines.map(inline).join('<br>');
+  }
+  while (stack.length) html += '</li></' + stack.pop().tag + '>';
+  return html;
+}
+const LIST = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+const RULE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+const cells = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+function md(src) {
+  const lines = String(src).replace(/\r\n?/g, '\n').split('\n');
+  let html = '';
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    const fence = line.match(/^\s*(```|~~~)/);
+    if (fence) {
+      const body = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith(fence[1])) body.push(lines[i++]);
+      i++;
+      html += '<pre><code>' + esc(body.join('\n')) + '</code></pre>';
+      continue;
+    }
+    const heading = line.match(/^(#{1,4})\s+(.*)$/);
+    if (heading) {
+      const level = Math.min(6, heading[1].length + 2);
+      html += '<h' + level + '>' + inline(heading[2].replace(/\s+#+\s*$/, '')) + '</h' + level + '>';
+      i++;
+      continue;
+    }
+    if (/^\s*([-*_])\s*(\1\s*){2,}$/.test(line)) { html += '<hr>'; i++; continue; }
+    if (line.includes('|') && i + 1 < lines.length && RULE.test(lines[i + 1]) && lines[i + 1].includes('-')) {
+      html += '<table><thead><tr>' + cells(line).map((c) => '<th>' + inline(c) + '</th>').join('') + '</tr></thead><tbody>';
+      i += 2;
+      while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
+        html += '<tr>' + cells(lines[i++]).map((c) => '<td>' + inline(c) + '</td>').join('') + '</tr>';
+      }
+      html += '</tbody></table>';
+      continue;
+    }
+    if (/^\s*>/.test(line)) {
+      const body = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) body.push(lines[i++].replace(/^\s*>\s?/, ''));
+      html += '<blockquote>' + md(body.join('\n')) + '</blockquote>';
+      continue;
+    }
+    if (LIST.test(line)) {
+      const items = [];
+      while (i < lines.length) {
+        const m = lines[i].match(LIST);
+        if (m) {
+          items.push({ indent: m[1].replace(/\t/g, '    ').length, ordered: /\d/.test(m[2]), start: parseInt(m[2], 10) || 1, lines: [m[3]] });
+        } else if (lines[i].trim() && /^\s+/.test(lines[i])) {
+          items[items.length - 1].lines.push(lines[i].trim());
+        } else if (!lines[i].trim() && i + 1 < lines.length && LIST.test(lines[i + 1])) {
+          // a blank line between items keeps the list going
+        } else {
+          break;
+        }
+        i++;
+      }
+      html += listHtml(items);
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !/^\s*(```|~~~|#{1,4}\s|>)/.test(lines[i]) && !LIST.test(lines[i])) {
+      if (para.length && lines[i].includes('|') && i + 1 < lines.length && RULE.test(lines[i + 1])) break;
+      para.push(lines[i++]);
+    }
+    html += '<p>' + para.map(inline).join('<br>') + '</p>';
+  }
+  return html;
+}
+function composeAnswer(option, text) {
+  return [option, String(text || '').trim()].filter(Boolean).join('\n');
+}
+function composeMessage(answers, note) {
+  const parts = answers.map((a) => '■ ' + a.question + '\n' + a.answer);
+  if (note) parts.push('補足:\n' + note);
+  return '質問シートへの回答です。\n\n' + parts.join('\n\n');
+}
+/*md:end*/
+
+const base = location.pathname.replace(/\/+$/, '');
+const paneId = decodeURIComponent(base.split('/').pop());
+const storeKey = 'herdr-sheet:' + paneId;
+const $ = (id) => document.getElementById(id);
+let drafts = {};
+try { drafts = JSON.parse(localStorage.getItem(storeKey) || '{}') || {}; } catch (_) { drafts = {}; }
+const save = () => { try { localStorage.setItem(storeKey, JSON.stringify(drafts)); } catch (_) { /* private mode */ } };
+const draft = (key) => (drafts[key] = drafts[key] || { option: '', text: '' });
+
+let asks = [];
+let shown = '';
+const cards = new Map();
+let busy = false;
+
+function grow(area) {
+  area.style.height = 'auto';
+  area.style.height = Math.max(64, area.scrollHeight + 2) + 'px';
+}
+
+function card(ask) {
+  const key = ask.text;
+  const state = draft(key);
+  const el = document.createElement('article');
+  el.className = 'card';
+  const isDo = ask.kind === 'do';
+  const options = ask.options && ask.options.length ? ask.options : (isDo ? ['やりました'] : []);
+  el.innerHTML =
+    '<div class="head"><span class="chip ' + (isDo ? 'do' : 'decide') + '">' + (isDo ? 'お願い' : '判断') + '</span><h2></h2></div>' +
+    (ask.detail ? '<div class="detail">' + md(ask.detail) + '</div>'
+      : '<div class="detail none">詳しい説明は書かれていません。足りなければ、下に「説明がほしい」と書いて送ってください。</div>') +
+    '<div class="answer"><div class="options"></div><textarea></textarea></div>' +
+    '<div class="sentbox"><div class="label"></div><pre></pre><button class="link" type="button">書き直す</button></div>';
+  el.querySelector('h2').textContent = ask.text;
+  const area = el.querySelector('textarea');
+  area.placeholder = isDo ? '結果やメモ（任意）' : (options.length ? '補足や条件があれば書く' : '回答を書く');
+  area.value = state.text || '';
+  area.addEventListener('input', () => { state.text = area.value; save(); grow(area); refresh(); });
+  const box = el.querySelector('.options');
+  if (!options.length) box.remove();
+  if (state.option && !options.includes(state.option)) state.option = '';
+  for (const option of options) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = option;
+    button.setAttribute('aria-pressed', String(state.option === option));
+    button.addEventListener('click', () => {
+      state.option = state.option === option ? '' : option;
+      for (const other of box.children) other.setAttribute('aria-pressed', String(other.textContent === state.option));
+      save();
+      refresh();
+    });
+    box.appendChild(button);
+  }
+  el.querySelector('.link').addEventListener('click', () => { delete state.sent; save(); paintSent(el, state); refresh(); area.focus(); });
+  paintSent(el, state);
+  requestAnimationFrame(() => grow(area));
+  return el;
+}
+
+function paintSent(el, state) {
+  el.classList.toggle('sent', Boolean(state.sent));
+  if (state.sent) {
+    el.querySelector('.sentbox .label').textContent = '送信済み ' + state.sent.at + '（エージェントが受け取ると、この質問は消えます）';
+    el.querySelector('.sentbox pre').textContent = state.sent.answer;
+  }
+}
+
+function pending() {
+  return asks
+    .map((ask) => ({ question: ask.text, state: draft(ask.text) }))
+    .filter((a) => !a.state.sent)
+    .map((a) => ({ question: a.question, answer: composeAnswer(a.state.option, a.state.text) }))
+    .filter((a) => a.answer);
+}
+
+function refresh() {
+  const count = pending().length;
+  const note = $('note').value.trim();
+  $('send').disabled = busy || (!count && !note);
+  $('copy').disabled = !count && !note;
+  $('send').textContent = count ? count + ' 件の回答を送信' : '回答を送信';
+}
+
+function setMsg(text, kind) {
+  $('msg').textContent = text;
+  $('msg').className = 'msg' + (kind ? ' ' + kind : '');
+}
+
+function render(data) {
+  const pane = data.pane || {};
+  const name = pane.label || pane.title || pane.pane_id || paneId;
+  document.title = '質問シート · ' + name;
+  $('where').innerHTML = '<b>' + esc(name) + '</b>' +
+    [pane.agent, pane.cwd].filter(Boolean).map((part) => ' · ' + esc(part)).join('');
+  const board = data.board || {};
+  const signature = JSON.stringify(board);
+  if (signature === shown) return;
+  shown = signature;
+  asks = board.asks || [];
+
+  const keys = new Set(asks.map((ask) => ask.text));
+  for (const key of Object.keys(drafts)) if (!keys.has(key)) delete drafts[key];
+  save();
+  const nodes = asks.map((ask) => {
+    const sig = JSON.stringify(ask);
+    const old = cards.get(ask.text);
+    if (old && old.sig === sig) return old.el;
+    const el = card(ask);
+    cards.set(ask.text, { sig, el });
+    return el;
+  });
+  for (const key of [...cards.keys()]) if (!keys.has(key)) cards.delete(key);
+  const main = $('asks');
+  const same = main.children.length === nodes.length && nodes.every((node, at) => main.children[at] === node);
+  if (!same) main.replaceChildren(...nodes);
+
+  $('noteCard').hidden = !asks.length;
+  $('notice').hidden = asks.length > 0;
+  if (!asks.length) $('notice').textContent = 'いま答えてほしいことはありません。このページは開いたままで構いません。新しい質問が来るとここに出ます。';
+
+  const links = board.links || [];
+  const todos = board.todos || [];
+  const done = todos.filter((todo) => todo.state === 'done').length;
+  $('extra').innerHTML =
+    (links.length ? '<h3>リンク</h3><ul>' + links.map((link) =>
+      '<li>' + (/^(https?|file|vscode|codex|cursor|zed):\/\//i.test(link.url)
+        ? '<a href="' + esc(link.url) + '"' + A + '>' + esc(link.label) + '</a>'
+        : esc(link.label) + ' <code>' + esc(link.url) + '</code>') + '</li>').join('') + '</ul>' : '') +
+    (todos.length ? '<h3>To-Do ' + done + '/' + todos.length + '</h3><ul>' + todos.map((todo) =>
+      '<li class="' + esc(todo.state) + '"><span class="mark">' +
+      (todo.state === 'done' ? '✓' : todo.state === 'in_progress' ? '▶' : '○') + '</span>' + esc(todo.text) + '</li>').join('') + '</ul>' : '');
+  refresh();
+}
+
+async function load() {
+  try {
+    const response = await fetch(base + '/data', { cache: 'no-store' });
+    if (response.status === 404) {
+      $('where').textContent = paneId;
+      $('notice').hidden = false;
+      $('notice').textContent = 'このペインはもうありません。';
+      $('asks').replaceChildren();
+      $('noteCard').hidden = true;
+      return;
+    }
+    if (!response.ok) throw new Error(String(response.status));
+    render(await response.json());
+    if ($('msg').dataset.offline) { delete $('msg').dataset.offline; setMsg(''); }
+  } catch (_) {
+    $('msg').dataset.offline = '1';
+    setMsg('herdr に接続できません。herdr が動いているか確認してください（書きかけは保存されています）。', 'err');
+  }
+}
+
+async function send() {
+  const answers = pending();
+  const note = $('note').value.trim();
+  if (busy || (!answers.length && !note)) return;
+  busy = true;
+  refresh();
+  setMsg('送信中…');
+  try {
+    const response = await fetch(base + '/answer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers, note }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || '送信できませんでした (' + response.status + ')');
+    const at = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+    for (const answer of answers) {
+      const state = draft(answer.question);
+      state.sent = { at, answer: answer.answer };
+      const entry = cards.get(answer.question);
+      if (entry) paintSent(entry.el, state);
+    }
+    $('note').value = '';
+    save();
+    setMsg('エージェントに送りました。', 'ok');
+  } catch (err) {
+    setMsg(err.message + '　「コピー」でペインに貼り付けることもできます。', 'err');
+  } finally {
+    busy = false;
+    refresh();
+  }
+}
+
+$('send').addEventListener('click', send);
+$('copy').addEventListener('click', async () => {
+  const text = composeMessage(pending(), $('note').value.trim());
+  try {
+    await navigator.clipboard.writeText(text);
+    setMsg('回答をコピーしました。ペインに貼り付けてください。', 'ok');
+  } catch (_) {
+    setMsg('コピーできませんでした。', 'err');
+  }
+});
+$('note').addEventListener('input', () => { refresh(); grow($('note')); });
+document.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); send(); }
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+load();
+setInterval(() => { if (!document.hidden) load(); }, 3000);
+</script>
+</body>
+</html>

@@ -80,6 +80,7 @@ fn sidebar_lists_every_agents_asks_and_the_column_shows_the_focused_board() {
             asks: vec![BoardAsk {
                 kind: AskKind::Decide,
                 text: "Q1 削除してよいか".into(),
+                ..BoardAsk::default()
             }],
             todos: vec![BoardTodo {
                 text: "hidden todo".into(),
@@ -89,6 +90,7 @@ fn sidebar_lists_every_agents_asks_and_the_column_shows_the_focused_board() {
                 label: "other link".into(),
                 url: "http://localhost:4000".into(),
             }],
+            ..PaneBoard::default()
         },
     );
     let mut state = board_state(vec![focused, other]);
@@ -180,4 +182,39 @@ fn a_narrow_window_keeps_its_panes_instead_of_the_column() {
     };
     let state = board_state(vec![agent("pane_1", true, board)]);
     assert_eq!(state.layout(90, 50).board.width, 0);
+}
+
+#[test]
+fn the_column_links_to_the_question_sheet_under_the_asks() {
+    let sheet = "http://127.0.0.1:4100/secret/pane_1";
+    let mut state = board_state(vec![agent(
+        "pane_1",
+        true,
+        PaneBoard {
+            asks: vec![BoardAsk {
+                text: "Q1 削除してよいか".into(),
+                ..BoardAsk::default()
+            }],
+            sheet_url: Some(sheet.into()),
+            ..PaneBoard::default()
+        },
+    )]);
+    let layout = state.layout(120, 50);
+    let link = state
+        .hits
+        .board
+        .iter()
+        .find(|(_, target)| *target == BoardTarget::OpenUrl(sheet.into()))
+        .map(|(rect, _)| *rect)
+        .expect("sheet link");
+    assert!(
+        link.x >= layout.board.x,
+        "the sheet link sits in the column"
+    );
+    let outcome = click(&mut state, link, KeyModifiers::empty());
+    assert!(
+        matches!(&outcome.actions[..], [ClientShellAction::OpenSafeWebUrl(url)] if url == sheet),
+        "{:?}",
+        outcome.actions
+    );
 }

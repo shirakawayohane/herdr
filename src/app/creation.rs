@@ -337,8 +337,14 @@ impl App {
                 .focused_pane_id()
                 .is_some_and(|focused| focused == pane_id);
         let presentation = terminal.effective_presentation();
+        let public_pane_id = self.public_pane_id(ws_idx, pane_id)?;
+        // fork: a board with asks links to the pane's question sheet.
+        let mut board = terminal.board.clone();
+        if !board.asks.is_empty() {
+            board.sheet_url = crate::sheet::url_for(&public_pane_id);
+        }
         Some(crate::api::schema::PaneInfo {
-            pane_id: self.public_pane_id(ws_idx, pane_id)?,
+            pane_id: public_pane_id,
             terminal_id: terminal.id.to_string(),
             workspace_id: self.public_workspace_id(ws_idx),
             tab_id: self.public_tab_id(ws_idx, tab_idx)?,
@@ -362,7 +368,7 @@ impl App {
             agent_session: terminal_agent_session_info(terminal),
             scroll: None,
             revision: terminal.revision,
-            board: terminal.board.clone(),
+            board,
         })
     }
 

@@ -54,6 +54,7 @@ mod render_signal;
 mod selection;
 mod server;
 mod session;
+mod sheet; // fork: the question sheet web page
 mod sound;
 mod terminal;
 mod terminal_effects;

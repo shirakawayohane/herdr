@@ -93,6 +93,7 @@ pub fn run_server() -> io::Result<()> {
             client_socket = %client_socket_path().display(),
             "herdr server started"
         );
+        crate::sheet::start(); // fork: question sheets
         print_ready_message(&api::socket_path(), &client_socket_path());
         server.app.run_plugin_startup_hooks();
 
@@ -206,6 +207,7 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
             warn!(err = %err, "failed to report handoff ownership; continuing as owner");
         }
         info!("handoff import server started");
+        crate::sheet::start(); // fork: question sheets
         print_ready_message(&api::socket_path(), &client_socket_path());
         server.app.run_plugin_startup_hooks();
         server.run().await

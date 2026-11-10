@@ -3,7 +3,8 @@
 //! The sidebar lists every agent's asks under its name, so the user sees
 //! everything waiting on them in one place; clicking one focuses that pane.
 //! A column right of the panes shows the focused agent's whole board (asks,
-//! links, todos), and clicking a link (with or without ctrl) opens it.
+//! links, todos), and clicking a link (with or without ctrl) opens it. Under
+//! the asks it links to the pane's question sheet (`crate::sheet`).
 
 use ratatui::{
     buffer::Buffer,
@@ -256,6 +257,18 @@ fn column_lines(board: &PaneBoard, width: u16, config: &ClientShellConfig) -> Ve
                 Style::default().fg(palette.text),
                 text_width,
                 None,
+            ));
+        }
+        // The sheet has what the one-line asks leave out, and takes answers.
+        if let Some(url) = &board.sheet_url {
+            lines.extend(item(
+                ("↗", Style::default().fg(palette.accent)),
+                "質問シートで答える",
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::UNDERLINED),
+                text_width,
+                Some(BoardTarget::OpenUrl(url.clone())),
             ));
         }
         lines.push(blank());

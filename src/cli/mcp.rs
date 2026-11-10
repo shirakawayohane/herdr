@@ -13,6 +13,9 @@
 //! what the user should see between turns on the pane's board
 //! (`crate::board`), and every `set_status` reply points out board entries
 //! that look stale, so agents keep it current without extra instructions.
+//! Asks carry the detail the user needs to answer them; Herdr serves them as
+//! the pane's question sheet (`crate::sheet`), and `update_board` returns its
+//! URL and names the asks that still lack detail.
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -37,8 +40,12 @@ watches many agent sessions at once. Before your final reply of every turn, call
 once so the user can tell which sessions need them, which are waiting on something, and which \
 can be closed. Keep the session's board current with update_board: what you need from the user \
 (asks), the remaining steps (todos), and every URL the user may want to open again (links). \
-The user reads the board instead of scrolling back, so do not repeat it at the end of every \
-reply.";
+Whenever you need an answer or an action from the user, put it on the board as an ask with its \
+detail in the same turn: Herdr turns the asks into the session's question sheet, a page the \
+user opens from the board to read the full background and write their answers, often much later \
+and without rereading the conversation. Their answers arrive as a normal message that starts \
+with \"質問シートへの回答\". The user reads the board and the sheet instead of scrolling back, so \
+do not repeat them at the end of every reply.";
 
 const UPDATE_BOARD_DESCRIPTION: &str = "Replace lists on this session's board, which Herdr shows \
 beside the terminal until you change it. Each list you pass replaces that whole list; lists you \
@@ -49,13 +56,34 @@ you, and never naming the user in the third person (write \"Check the sidebar la
 - asks: everything you are waiting on the user for. kind decide = a decision or answer only they \
 can give; kind do = something only they can do (sign in, review, run a command). Add them in the \
 same turn your reply asks, numbered like your reply (\"Q1 ...\"), and remove each one once the \
-user has answered or done it.\n\
+user has answered or done it. text is the one-line question the board shows. Always give detail \
+as well: the asks are the session's question sheet, a web page where the user reads each ask in \
+full and writes the answer, and this call returns its URL. Keep your reply short, give that URL \
+in it, and leave the background to the sheet. Answers written there come back to you as a \
+message starting with \"質問シートへの回答\"; an answer may also ask you for more explanation, in \
+which case improve the detail and keep the ask.\n\
 - todos: the remaining steps of work with several steps, each named by what it achieves. Update \
 states as you go and clear the list when the work is finished.\n\
 - links: every URL the user may want to open again, so they never have to ask for it or search \
 the conversation: a dev server you started, an artifact or document you published, a PR, a \
 preview or deploy. Add one as soon as the URL exists, label it by what it shows, and remove it \
 when it stops working, for example after stopping the server.";
+
+const ASK_DETAIL_DESCRIPTION: &str = "Markdown shown under the question on the question sheet. \
+The user answers from the sheet alone, often hours later and between other sessions, so write it \
+for someone who has forgotten this conversation; a question that leans on the conversation gets \
+asked back instead of answered. Cover, in the user's language: what this is about and what you \
+found, with the concrete facts (file names, numbers, error text, current behaviour); why it needs \
+them and what it blocks; each option with what it leads to (cost, risk, what changes for them); \
+which one you recommend and why; and what you will do if they have no preference. For kind do: \
+the exact steps, commands or URLs, and how they tell you it is done. Explain any name or label \
+you made up during the work, and never write \"as discussed above\". Short paragraphs, lists, \
+tables and code blocks render.";
+
+const ASK_OPTIONS_DESCRIPTION: &str = "Answers the user can pick with one click. Each is a short \
+phrase that is a complete answer on its own (\"はい、削除する\", not \"A\"). Put the one you \
+recommend first and end it with \"(推奨)\". Leave options out when the answer is free text; the \
+user can always add a note or write something else.";
 
 const SET_STATUS_DESCRIPTION: &str = "Report how this turn ends. Call it exactly once, right \
 before your final reply of every turn.\n\
@@ -210,6 +238,13 @@ fn update_board_tool() -> Value {
                         "properties": {
                             "kind": { "type": "string", "enum": ["decide", "do"] },
                             "text": { "type": "string" },
+                            "detail": { "type": "string", "description": ASK_DETAIL_DESCRIPTION },
+                            "options": {
+                                "type": "array",
+                                "maxItems": crate::board::MAX_OPTIONS,
+                                "items": { "type": "string" },
+                                "description": ASK_OPTIONS_DESCRIPTION,
+                            },
                         },
                         "required": ["kind", "text"],
                         "additionalProperties": false,
@@ -276,10 +311,44 @@ fn update_board(arguments: Value, pane_id: Option<&str>, panes: &mut dyn PaneSta
     if nested_agent() {
         return tool_result("nested agent; the pane's own agent keeps the board", false);
     }
-    match panes.set_board(params) {
-        Ok(()) => tool_result("board updated", false),
-        Err(err) => tool_result(&format!("herdr did not accept the board: {err}"), true),
+    let asked = params.asks.as_ref().is_some_and(|asks| !asks.is_empty());
+    let bare = params.asks.as_deref().map(asks_without_detail);
+    if let Err(err) = panes.set_board(params) {
+        return tool_result(&format!("herdr did not accept the board: {err}"), true);
     }
+    let mut lines = vec!["board updated".to_string()];
+    if asked {
+        match panes.board(pane_id).and_then(|board| board.sheet_url) {
+            Some(url) => lines.push(format!(
+                "Question sheet: {url}\nThe user reads the asks in full and answers them there. \
+                 Give this URL in your reply instead of repeating the detail."
+            )),
+            None => lines.push(
+                "No question sheet is being served, so your reply has to carry the full detail."
+                    .to_string(),
+            ),
+        }
+    }
+    lines.extend(bare.as_deref().and_then(missing_detail_hint));
+    tool_result(&lines.join("\n"), false)
+}
+
+fn asks_without_detail(asks: &[crate::board::BoardAsk]) -> Vec<String> {
+    asks.iter()
+        .filter(|ask| ask.detail.trim().is_empty())
+        .map(|ask| ask.text.trim().to_string())
+        .collect()
+}
+
+fn missing_detail_hint(bare: &[String]) -> Option<String> {
+    (!bare.is_empty()).then(|| {
+        format!(
+            "These asks have no detail, so the question sheet shows only their one line: {}. \
+             Call update_board again with detail the user can answer from without the \
+             conversation.",
+            bare.join(" / ")
+        )
+    })
 }
 
 fn set_status(arguments: &Value, pane_id: Option<&str>, panes: &mut dyn PaneStatus) -> Value {
@@ -374,6 +443,9 @@ fn board_hints(phase: &str, board: &PaneBoard) -> Vec<String> {
             "Board asks still open: {asks}. Remove the ones the user has answered or done with \
              update_board."
         ));
+        if phase == PHASE_QUESTION {
+            hints.extend(missing_detail_hint(&asks_without_detail(&board.asks)));
+        }
     }
     let open_todos = board
         .todos
@@ -698,6 +770,48 @@ mod tests {
     }
 
     #[test]
+    fn update_board_returns_the_sheet_and_names_asks_without_detail() {
+        let mut panes = FakePanes::default();
+        panes.board.sheet_url = Some("http://127.0.0.1:4100/s/w1:p2".into());
+        let result = call(
+            &mut panes,
+            Some("w1:p2"),
+            UPDATE_BOARD_TOOL,
+            json!({"asks": [
+                {"kind": "decide", "text": "Q1 削除してよいか",
+                 "detail": "## 背景\n...", "options": ["はい (推奨)", "いいえ"]},
+                {"kind": "do", "text": "Q2 stg に再ログイン", "detail": " "},
+            ]}),
+        );
+        assert_eq!(result["isError"], false);
+        let asks = panes.board_sets[0].asks.as_ref().unwrap();
+        assert_eq!(asks[0].detail, "## 背景\n...");
+        assert_eq!(asks[0].options.len(), 2);
+        let reply = text(&result);
+        assert!(
+            reply.contains("Question sheet: http://127.0.0.1:4100/s/w1:p2"),
+            "{reply}"
+        );
+        assert!(reply.contains("no detail"), "{reply}");
+        assert!(reply.contains("Q2 stg に再ログイン") && !reply.contains("Q1 削除してよいか"));
+
+        // Clearing asks or touching other lists says nothing about the sheet.
+        for arguments in [json!({"asks": []}), json!({"links": []})] {
+            let result = call(&mut panes, Some("w1:p2"), UPDATE_BOARD_TOOL, arguments);
+            assert_eq!(text(&result), "board updated");
+        }
+
+        panes.board.sheet_url = None;
+        let result = call(
+            &mut panes,
+            Some("w1:p2"),
+            UPDATE_BOARD_TOOL,
+            json!({"asks": [{"kind": "decide", "text": "Q1", "detail": "d"}]}),
+        );
+        assert!(text(&result).contains("No question sheet"));
+    }
+
+    #[test]
     fn update_board_rejects_empty_or_malformed_calls() {
         let mut panes = FakePanes::default();
         for arguments in [
@@ -721,16 +835,24 @@ mod tests {
             asks: vec![crate::board::BoardAsk {
                 kind: AskKind::Do,
                 text: "stg に再ログイン".into(),
+                ..Default::default()
             }],
             todos: vec![crate::board::BoardTodo {
                 text: "PR 作成".into(),
                 state: TodoState::Pending,
             }],
-            links: Vec::new(),
+            ..PaneBoard::default()
         };
         let result = set_status(&mut panes, Some("w1:p2"), json!({"status": "done"}));
         assert!(text(&result).contains("[do] stg に再ログイン"));
         assert!(text(&result).contains("1 board todos"));
+        assert!(!text(&result).contains("no detail"));
+
+        let result = set_status(&mut panes, Some("w1:p2"), json!({"status": "question"}));
+        assert!(text(&result).contains("no detail"), "{}", text(&result));
+        panes.board.asks[0].detail = "手順: ...".into();
+        let result = set_status(&mut panes, Some("w1:p2"), json!({"status": "question"}));
+        assert!(!text(&result).contains("no detail"));
 
         panes.board = PaneBoard::default();
         let result = set_status(&mut panes, Some("w1:p2"), json!({"status": "done"}));

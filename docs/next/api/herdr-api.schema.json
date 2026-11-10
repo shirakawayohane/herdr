@@ -102,9 +102,20 @@
         "BoardAsk": {
           "description": "Something the agent needs from the user.",
           "properties": {
+            "detail": {
+              "description": "Markdown for the question sheet: everything the user needs to answer\nwithout going back to the conversation.",
+              "type": "string"
+            },
             "kind": {
               "$ref": "#/schemas/event/$defs/AskKind",
               "default": "decide"
+            },
+            "options": {
+              "description": "Answers the user can pick on the question sheet.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "text": {
               "type": "string"
@@ -836,6 +847,13 @@
                 "$ref": "#/schemas/event/$defs/BoardLink"
               },
               "type": "array"
+            },
+            "sheet_url": {
+              "description": "Where the user reads the asks in full and answers them. Filled in by\nthe server when it reports a board with asks; never stored.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "todos": {
               "items": {
@@ -1820,9 +1838,20 @@
         "BoardAsk": {
           "description": "Something the agent needs from the user.",
           "properties": {
+            "detail": {
+              "description": "Markdown for the question sheet: everything the user needs to answer\nwithout going back to the conversation.",
+              "type": "string"
+            },
             "kind": {
               "$ref": "#/schemas/request/$defs/AskKind",
               "default": "decide"
+            },
+            "options": {
+              "description": "Answers the user can pick on the question sheet.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "text": {
               "type": "string"
@@ -7035,9 +7064,20 @@
         "BoardAsk": {
           "description": "Something the agent needs from the user.",
           "properties": {
+            "detail": {
+              "description": "Markdown for the question sheet: everything the user needs to answer\nwithout going back to the conversation.",
+              "type": "string"
+            },
             "kind": {
               "$ref": "#/schemas/success_response/$defs/AskKind",
               "default": "decide"
+            },
+            "options": {
+              "description": "Answers the user can pick on the question sheet.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "text": {
               "type": "string"
@@ -8099,6 +8139,13 @@
                 "$ref": "#/schemas/success_response/$defs/BoardLink"
               },
               "type": "array"
+            },
+            "sheet_url": {
+              "description": "Where the user reads the asks in full and answers them. Filled in by\nthe server when it reports a board with asks; never stored.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "todos": {
               "items": {
